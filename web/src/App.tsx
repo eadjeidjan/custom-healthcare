@@ -10,6 +10,8 @@ import Assistant from "./pages/Assistant";
 import Alerts from "./pages/Alerts";
 import Knowledge from "./pages/Knowledge";
 import Model from "./pages/Model";
+import PortalApp from "./portal/PortalApp";
+import PolicyApp from "./policy/PolicyApp";
 
 export default function App() {
   const { user, ready } = useSession();
@@ -21,9 +23,13 @@ export default function App() {
       </div>
     );
   }
+  // Each role gets its own interface: patients the portal, policy makers the population dashboard.
+  if (user?.role === "patient") return <Routes><Route path="/portal/*" element={<PortalApp />} /><Route path="*" element={<Navigate to="/portal" replace />} /></Routes>;
+  if (user?.role === "policy") return <Routes><Route path="/policy/*" element={<PolicyApp />} /><Route path="*" element={<Navigate to="/policy" replace />} /></Routes>;
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/policy/*" element={user?.role === "admin" ? <PolicyApp /> : <Navigate to="/" replace />} />
       <Route element={user ? <Layout /> : <Navigate to="/login" replace state={{ from: loc.pathname }} />}>
         <Route index element={<Dashboard />} />
         <Route path="patients" element={<Patients />} />

@@ -4,7 +4,7 @@ Some symptoms in sickle cell disease (SCD) can signal life-threatening complicat
 
 ## Fever in sickle cell disease
 
-In sickle cell disease, fever is a medical emergency because reduced spleen function makes overwhelming bacterial infection (sepsis) possible, especially in children. NHLBI guidance uses a temperature of 38.5 °C (101.3 °F) or higher as the threshold for urgent evaluation; many local and paediatric protocols use a lower threshold of 38.0 °C. Care teams should follow their local protocol.
+In sickle cell disease, fever is a medical emergency because reduced spleen function makes overwhelming bacterial infection (sepsis) possible, especially in children. NHLBI guidance uses a temperature of 38.5 °C (101.3 °F) or higher as the threshold for urgent evaluation; many local and paediatric protocols use a lower threshold of 38.0 °C (100.4 °F). Care teams should follow their local protocol.
 
 **Action:** For fever at or above the threshold in the patient's care plan, seek urgent medical assessment the same day (emergency department or day unit). Do not wait to see if it settles. Blood tests, blood cultures and prompt antibiotics are usually needed.
 

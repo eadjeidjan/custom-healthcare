@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import assistant, care, llm, rag, risk
 from app.config import VERSION
 from app.db import Alert, Assessment, CheckIn, Crisis, Patient, User, get_session, now
-from app.security import check_password, current_user, make_token, user_out
+from app.security import check_password, current_user, make_token, staff_user, user_out
 
 router = APIRouter()
 
@@ -42,13 +42,13 @@ async def health():
 
 
 @router.get("/model")
-async def model_card(_: User = Depends(current_user)):
+async def model_card(_: User = Depends(staff_user)):
     return risk.card()
 
 
 @router.get("/dashboard")
-async def dashboard(_: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
-    patients = (await session.scalars(select(Patient))).all()
+async def dashboard(_: User = Depends(staff_user), session: AsyncSession = Depends(get_session)):
+    patients = (await session.scalars(select(Patient).where(Patient.featured.is_(True)))).all()
     rows = [await care.patient_row(session, p) for p in patients]
     rows.sort(key=lambda r: r["risk"]["score"] if r["risk"] else -1, reverse=True)
     levels = {k: 0 for k in care.LEVEL_RANK}
@@ -60,13 +60,17 @@ async def dashboard(_: User = Depends(current_user), session: AsyncSession = Dep
     trend_rows = (await session.execute(
         select(Assessment.for_date, func.avg(Assessment.score),
                func.count(func.distinct(Assessment.patient_id)).filter(Assessment.level.in_(("high", "critical"))))
-        .where(Assessment.for_date >= since).group_by(Assessment.for_date).order_by(Assessment.for_date))).all()
+        .join(Patient, Patient.id == Assessment.patient_id)
+        .where(Assessment.for_date >= since, Patient.featured.is_(True)).group_by(Assessment.for_date).order_by(Assessment.for_date))).all()
     return {
         "patients": len(rows), "levels": levels,
-        "open_alerts": await session.scalar(select(func.count()).select_from(Alert).where(Alert.status == "open")),
+        "open_alerts": await session.scalar(select(func.count()).select_from(Alert).join(Patient, Patient.id == Alert.patient_id)
+                                            .where(Alert.status == "open", Patient.featured.is_(True))),
         "checkins_today": await session.scalar(select(func.count()).select_from(CheckIn)
-                                               .where(CheckIn.date == today)),
-        "crises_30d": await session.scalar(select(func.count()).select_from(Crisis).where(Crisis.date >= since)),
+                                               .join(Patient, Patient.id == CheckIn.patient_id)
+                                               .where(CheckIn.date == today, Patient.featured.is_(True))),
+        "crises_30d": await session.scalar(select(func.count()).select_from(Crisis).join(Patient, Patient.id == Crisis.patient_id)
+                                           .where(Crisis.date >= since, Patient.featured.is_(True))),
         "watchlist": rows[:8],
         "trend": [{"date": d.isoformat(), "avg_score": round(float(a), 1), "high": int(h)} for d, a, h in trend_rows],
     }
@@ -79,9 +83,10 @@ def alert_out(a: Alert, name: str) -> dict:
 
 
 @router.get("/alerts")
-async def alerts(status: str = "open", _: User = Depends(current_user),
+async def alerts(status: str = "open", _: User = Depends(staff_user),
                  session: AsyncSession = Depends(get_session)):
-    q = select(Alert, Patient.name).join(Patient, Patient.id == Alert.patient_id).order_by(Alert.created_at.desc())
+    q = (select(Alert, Patient.name).join(Patient, Patient.id == Alert.patient_id).where(Patient.featured.is_(True))
+         .order_by(Alert.created_at.desc()))
     if status in ("open", "acknowledged"):
         q = q.where(Alert.status == status)
     return [alert_out(a, n) for a, n in (await session.execute(q.limit(200))).all()]
@@ -92,7 +97,7 @@ class AckIn(BaseModel):
 
 
 @router.post("/alerts/{alert_id}/ack")
-async def ack(alert_id: str, body: AckIn, user: User = Depends(current_user),
+async def ack(alert_id: str, body: AckIn, user: User = Depends(staff_user),
               session: AsyncSession = Depends(get_session)):
     a = await session.get(Alert, alert_id)
     if a is None:

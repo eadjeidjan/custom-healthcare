@@ -40,7 +40,7 @@ export async function errorFrom(res: Response): Promise<ApiError> {
   return new ApiError(res.status, msg);
 }
 
-async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const isForm = body instanceof FormData;
   let res: Response;
   try {

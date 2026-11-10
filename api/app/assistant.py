@@ -23,9 +23,10 @@ SYSTEM = (
     "- Use the tools for facts: list_patients / get_patient / get_recent_checkins for data, predict_voc_risk for the "
     "7-day risk (never invent scores), search_guidelines for clinical guidance, list_open_alerts, notify_care_team.\n"
     "- When you use guidance, cite it by title in brackets, e.g. [Red flags and emergency care].\n"
-    "- Red flags (fever ≥38.5 °C, chest pain or breathing trouble, stroke signs, SpO2 <92 %, severe uncontrolled "
+    "- Red flags (fever ≥38.5 °C / 101.3 °F, chest pain or breathing trouble, stroke signs, SpO2 <92 %, severe uncontrolled "
     "pain, sudden pallor/large spleen) always mean emergency care: say so first.\n"
     "- Never give medicine doses or start/stop medicines; refer to the haematology team's plan.\n"
+    "- Always give body temperatures in both °C and °F, e.g. 38.5 °C (101.3 °F).\n"
     "- You support clinicians; you don't diagnose. Be concise: short paragraphs, bullet lists, bold key numbers.")
 
 INJECTION = re.compile(r"(ignore (all |any )?(previous|prior|above) (instructions|rules)|system prompt|you are now "
@@ -48,7 +49,8 @@ def use_tools(tools: Optional[list[BaseTool]]) -> None:
 def local_tools() -> list[BaseTool]:
     fns = [mcp_server.list_patients, mcp_server.get_patient, mcp_server.get_recent_checkins,
            mcp_server.predict_voc_risk, mcp_server.search_guidelines, mcp_server.list_open_alerts,
-           mcp_server.notify_care_team]
+           mcp_server.notify_care_team, mcp_server.get_vitals, mcp_server.get_labs,
+           mcp_server.get_imaging_findings, mcp_server.get_record_summary]
     return [StructuredTool.from_function(coroutine=f, name=f.__name__, description=f.__doc__) for f in fns]
 
 

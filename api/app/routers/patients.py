@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import care, pipeline
 from app.db import Assessment, CheckIn, Crisis, Patient, User, get_session
-from app.security import current_user
+from app.security import staff_user
 
 router = APIRouter()
 Genotype = Literal["HbSS", "HbSC", "HbSβ0", "HbSβ+"]
@@ -53,9 +53,9 @@ class PatientPatch(BaseModel):
 
 
 @router.get("/patients")
-async def list_patients(q: str = "", level: str = "", _: User = Depends(current_user),
+async def list_patients(q: str = "", level: str = "", _: User = Depends(staff_user),
                         session: AsyncSession = Depends(get_session)):
-    stmt = select(Patient)
+    stmt = select(Patient).where(Patient.featured.is_(True))   # the registry-only records feed policy analytics
     if q:
         stmt = stmt.where(Patient.name.ilike(f"%{q}%") | Patient.mrn.ilike(f"%{q}%"))
     rows = [await care.patient_row(session, p) for p in (await session.scalars(stmt)).all()]
@@ -66,7 +66,7 @@ async def list_patients(q: str = "", level: str = "", _: User = Depends(current_
 
 
 @router.post("/patients")
-async def create_patient(body: PatientIn, _: User = Depends(current_user),
+async def create_patient(body: PatientIn, _: User = Depends(staff_user),
                          session: AsyncSession = Depends(get_session)):
     if await session.scalar(select(Patient).where(Patient.mrn == body.mrn.strip())):
         raise HTTPException(409, "A patient with this MRN already exists.")
@@ -77,12 +77,12 @@ async def create_patient(body: PatientIn, _: User = Depends(current_user),
 
 
 @router.get("/patients/{pid}")
-async def get_patient(pid: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def get_patient(pid: str, _: User = Depends(staff_user), session: AsyncSession = Depends(get_session)):
     return await care.patient_out(session, await _patient(session, pid))
 
 
 @router.patch("/patients/{pid}")
-async def patch_patient(pid: str, body: PatientPatch, _: User = Depends(current_user),
+async def patch_patient(pid: str, body: PatientPatch, _: User = Depends(staff_user),
                         session: AsyncSession = Depends(get_session)):
     p = await _patient(session, pid)
     for k, v in body.model_dump(exclude_unset=True).items():
@@ -116,14 +116,14 @@ class CheckInIn(BaseModel):
 
 
 @router.get("/patients/{pid}/checkins")
-async def list_checkins(pid: str, days: int = 30, _: User = Depends(current_user),
+async def list_checkins(pid: str, days: int = 30, _: User = Depends(staff_user),
                         session: AsyncSession = Depends(get_session)):
     await _patient(session, pid)
     return [care.checkin_out(c) for c in await care.recent_days(session, pid, max(1, min(days, 365)))]
 
 
 @router.post("/patients/{pid}/checkins")
-async def add_checkin(pid: str, body: CheckInIn, _: User = Depends(current_user),
+async def add_checkin(pid: str, body: CheckInIn, _: User = Depends(staff_user),
                       session: AsyncSession = Depends(get_session)):
     p = await _patient(session, pid)
     values = body.model_dump()
@@ -150,14 +150,14 @@ class CrisisIn(BaseModel):
 
 
 @router.get("/patients/{pid}/crises")
-async def list_crises(pid: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def list_crises(pid: str, _: User = Depends(staff_user), session: AsyncSession = Depends(get_session)):
     await _patient(session, pid)
     rows = await session.scalars(select(Crisis).where(Crisis.patient_id == pid).order_by(Crisis.date.desc()))
     return [care.crisis_out(c) for c in rows]
 
 
 @router.post("/patients/{pid}/crises")
-async def add_crisis(pid: str, body: CrisisIn, _: User = Depends(current_user),
+async def add_crisis(pid: str, body: CrisisIn, _: User = Depends(staff_user),
                      session: AsyncSession = Depends(get_session)):
     await _patient(session, pid)
     c = Crisis(patient_id=pid, **body.model_dump())
@@ -167,7 +167,7 @@ async def add_crisis(pid: str, body: CrisisIn, _: User = Depends(current_user),
 
 
 @router.get("/patients/{pid}/assessments")
-async def list_assessments(pid: str, days: int = 60, _: User = Depends(current_user),
+async def list_assessments(pid: str, days: int = 60, _: User = Depends(staff_user),
                            session: AsyncSession = Depends(get_session)):
     await _patient(session, pid)
     since = date.today() - timedelta(days=max(1, min(days, 365)))
@@ -177,7 +177,7 @@ async def list_assessments(pid: str, days: int = 60, _: User = Depends(current_u
 
 
 @router.post("/patients/{pid}/assess")
-async def assess(pid: str, _: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def assess(pid: str, _: User = Depends(staff_user), session: AsyncSession = Depends(get_session)):
     await _patient(session, pid)
     state = await pipeline.run(pid)
     if state.get("error"):

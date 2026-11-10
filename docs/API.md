@@ -112,3 +112,74 @@ Assessment = {
 ## Model card
 - `GET /model` → `{version, trained_at, algorithm, training_rows, positive_rate, auc, brier, thresholds:
   {moderate, high, critical}, features: [{key, label, weight, description}], data_note, limitations: string[]}`
+
+---
+
+# v1.1 additions: roles, IoT devices, medical records, patient portal, policy dashboard
+
+## Roles
+`User.role`: `admin` | `clinician` (care provider) | `patient` (portal: only their own record, `User.patient_id`) |
+`policy` (population analytics: anonymised aggregates only). `POST /auth/login` and `GET /me` return
+`{..., role, patient_id}`. All clinical routes above need `admin` or `clinician` (403 otherwise).
+Demo accounts (when `DEMO_PASSWORD` is set): `clinician@sickleguard.local`, `patient@sickleguard.local` (linked to
+Ama Owusu), `policy@sickleguard.local`.
+
+`Patient` gains `region` (one of Ghana's 16 regions), `district`, `facility`. `Crisis` gains `los_days`, `facility`.
+
+## IoT devices and readings (staff) — work stream "records"
+`Device = {id, patient_id, kind: "wearable"|"pulse_oximeter"|"smart_bottle"|"thermometer", label, vendor, serial,
+  status: "active"|"offline"|"retired", simulated: bool, battery: int|null, last_seen: string|null, created_at}`
+`Metric = "heart_rate"|"hrv_rmssd"|"spo2"|"skin_temp_c"|"body_temp_c"|"steps"|"sleep_minutes"|"fluid_ml"|"resp_rate"`
+- `GET /patients/{id}/devices` → `Device[]`
+- `POST /patients/{id}/devices` `{kind, label?, vendor?, serial?}` → `Device & {api_key}` (api_key shown once)
+- `PATCH /devices/{id}` `{status?, label?}` → `Device`
+- `POST /ingest/readings` header `X-Device-Key: <api_key>` body `{readings: [{metric, value, ts?}]}` → `{accepted: n}`
+  (how a real device or gateway pushes data; no user token)
+- `GET /patients/{id}/vitals?days=14` → `{metrics: {[Metric]: [{date, mean, min, max, n}]}, latest: {[Metric]: {value, ts}},
+  baselines: {[Metric]: number}, alerts: [{metric, message}]}`  (daily aggregates for charts)
+- `GET /patients/{id}/readings?metric=heart_rate&hours=48` → `[{ts, value}]` (raw, for a detail chart)
+
+## Medical records (staff)
+`Lab = {id, patient_id, taken_at, code, name, value, unit, ref_low, ref_high, source, flag: "low"|"high"|null}`
+- `GET /patients/{id}/labs?days=365` → `Lab[]` newest first
+- `POST /patients/{id}/labs` `{taken_at?, code, value, unit?}` → `Lab` (name/ref ranges filled from the code)
+- `POST /patients/{id}/labs/import` multipart `file` (CSV `taken_at,code,value[,unit]` or FHIR R4 Bundle JSON of
+  Observations) → `{imported: n, skipped: n, errors: string[]}`
+
+`Imaging = {id, patient_id, study_date, modality: "xray"|"mri"|"ct"|"ultrasound"|"tcd", body_part, indication, report,
+  impression, findings: Finding[], tcd_velocity: number|null, ai_summary: string|null, ai_findings: Finding[],
+  file_url: string|null, content_type, source, created_at}`; `Finding = {code, label, severity: "info"|"moderate"|"severe"}`
+- `GET /patients/{id}/imaging` → `Imaging[]` newest first
+- `POST /patients/{id}/imaging` multipart: `modality, study_date, body_part?, indication?, report?, impression?,
+  tcd_velocity?, file?` (image jpg/png/dcm-as-png or PDF) → `Imaging`. Structured `findings` are extracted from the
+  report text (OpenAI when available, else keyword rules); an uploaded image gets an AI "second look" (`ai_summary`,
+  `ai_findings`, OpenAI vision) clearly labelled as not a radiology read.
+- `GET /imaging/{id}/file` → the stored file (auth required)
+- `GET /patients/{id}/record-summary` → `{labs_latest: {[code]: Lab}, imaging_flags: Finding[], devices: n,
+  risk_inputs: [{source: "device"|"lab"|"imaging"|"checkin", label, value}]}` (what feeds the prediction)
+
+## Patient portal (role patient) — work stream "portal"
+- `GET /portal/me` → `{patient: Patient (no notes), risk: Assessment|null, streak_days: int, next_steps: PlanItem[],
+  devices: Device[], care_team: string, emergency: {phone: string, message: string}}`
+- `GET /portal/checkins?days=30`, `POST /portal/checkins` (same body as staff check-ins) → `{checkin, assessment}`
+- `GET /portal/risk-history?days=60` → `[{date, score, level}]`
+- `GET /portal/vitals?days=14` → same shape as `/patients/{id}/vitals`
+- `GET /portal/records` → `{labs: Lab[] (latest per code), imaging: Imaging[] (report + impression only)}`
+- `POST /portal/ask` `{message}` → SSE like `/assistant/chat` but patient-safe: plain-language, guidance (RAG) +
+  their own data only, no other patients, emergency advice first when red-flag words appear.
+- `GET /portal/learn` → `[{title, summary, doc_title}]` short self-care cards from the guidance
+
+## Policy dashboard (role policy/admin) — work stream "policy"
+Only aggregates; any group with fewer than 5 patients is shown as `"<5"` / null (privacy floor).
+- `GET /policy/overview` → `{patients, regions, crises_12m, admissions_12m, bed_days_12m, avg_los, hu_coverage,
+  high_risk_now, est_cost_ghs_12m, deltas: {...vs previous period}}`
+- `GET /policy/regions` → `[{region, patients, per_100k?, crises_12m, admissions_12m, hu_coverage, avg_risk,
+  high_risk_now, suppressed: bool}]`
+- `GET /policy/trends?months=12` → `[{month, crises, admissions, bed_days, avg_risk}]`
+- `GET /policy/forecast?weeks=8` → `[{week_start, expected_crises, low, high, expected_admissions}]` (from current
+  risk scores + seasonality)
+- `GET /policy/drivers` → `[{factor, label, share_of_risk, patients_affected}]` (which modifiable factors drive risk
+  across the population: hydration, hydroxyurea adherence, infection...)
+- `GET /policy/interventions` → scenario estimates `[{key, label, description, crises_avoided, admissions_avoided,
+  cost_saved_ghs, assumptions}]` e.g. raise hydroxyurea coverage to 60 %, hydration programme, cold-season outreach
+- `GET /policy/export.csv` → regional table as CSV

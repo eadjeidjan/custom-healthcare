@@ -50,5 +50,29 @@ async def admin_user(user: User = Depends(current_user)) -> User:
     return user
 
 
+STAFF = ("admin", "clinician")
+
+
+async def staff_user(user: User = Depends(current_user)) -> User:
+    """Care providers and admins: the clinical pages and APIs."""
+    if user.role not in STAFF:
+        raise HTTPException(403, "This page is for care providers.")
+    return user
+
+
+async def patient_user(user: User = Depends(current_user)) -> User:
+    """A patient signed in to the portal (sees only their own record)."""
+    if user.role != "patient" or not user.patient_id:
+        raise HTTPException(403, "This page is for patients.")
+    return user
+
+
+async def policy_user(user: User = Depends(current_user)) -> User:
+    """Policy makers (and admins): anonymised, aggregated data only."""
+    if user.role not in ("policy", "admin"):
+        raise HTTPException(403, "This page is for policy makers.")
+    return user
+
+
 def user_out(u: User) -> dict:
-    return {"id": u.id, "email": u.email, "name": u.name, "role": u.role}
+    return {"id": u.id, "email": u.email, "name": u.name, "role": u.role, "patient_id": u.patient_id}

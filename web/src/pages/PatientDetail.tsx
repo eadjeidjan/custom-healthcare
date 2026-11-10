@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   Activity, ArrowLeft, Bot, BrainCircuit, CalendarPlus, CheckCircle2, ClipboardList, Cpu, Database, Droplet, HeartPulse,
-  Info, Loader2, MessageSquare, Pill, ShieldCheck, Sparkles, Stethoscope, Thermometer, TrendingUp, Zap,
+  FlaskConical, Info, LayoutDashboard, Loader2, MessageSquare, Pill, ScanEye, ShieldCheck, Sparkles, Stethoscope, Thermometer,
+  TrendingUp, Zap,
 } from "lucide-react";
 import type { Assessment, CheckIn, Crisis } from "../types";
 import { api } from "../lib/api";
@@ -12,6 +13,17 @@ import { Badge, Button, Empty, ErrorNote, LevelPill, Modal, Page, Panel, Skeleto
 import { FactorBars, PatientTrend, RiskGauge, toPoints } from "../components/charts";
 import { Markdown, PlanView, RedFlagBanner, SourcesList } from "../components/clinical";
 import { CheckInForm, CrisisForm } from "../components/PatientForms";
+import { fmtTempShort } from "../lib/temp";
+import { records } from "../records/api";
+import { Tabs, type TabDef } from "../records/ui";
+import { VitalsTab } from "../records/VitalsTab";
+import { LabsTab } from "../records/LabsTab";
+import { ImagingTab } from "../records/ImagingTab";
+import { CheckinTrends } from "../records/CheckinsTab";
+import { RecordSnapshot } from "../records/RecordSnapshot";
+
+type TabId = "overview" | "vitals" | "labs" | "imaging" | "checkins";
+const TAB_IDS: TabId[] = ["overview", "vitals", "labs", "imaging", "checkins"];
 
 const STEPS = [
   { label: "Gathering patient data", icon: Database },
@@ -30,6 +42,10 @@ export default function PatientDetail() {
   const checkins = useAsync(() => api.checkins(id, 30), [id]);
   const crises = useAsync(() => api.crises(id), [id]);
   const model = useAsync(() => api.model().catch(() => null), []);
+  const summary = useAsync(() => records.summary(id).catch(() => null), [id]);
+  const [params, setParams] = useSearchParams();
+  const tab: TabId = TAB_IDS.includes(params.get("tab") as TabId) ? (params.get("tab") as TabId) : "overview";
+  const setTab = (t: TabId) => setParams((p) => { const n = new URLSearchParams(p); if (t === "overview") n.delete("tab"); else n.set("tab", t); return n; }, { replace: true });
   const thresholds = toPoints(model.data?.thresholds);
 
   const [latest, setLatest] = useState<Assessment | null>(null);
@@ -120,6 +136,26 @@ export default function PatientDetail() {
       {/* Red flags: never hidden */}
       {(flags.length > 0 || fallbackFlags.length > 0) && <div className="mb-4"><RedFlagBanner flags={flags.length ? flags : fallbackFlags} /></div>}
 
+      <Tabs<TabId> value={tab} onChange={setTab} tabs={tabDefs(summary.data)} />
+
+      {tab === "vitals" && <VitalsTab patientId={id} onChanged={() => summary.reload(true)} />}
+      {tab === "labs" && <LabsTab patientId={id} hbBaseline={p?.hb_baseline} onChanged={() => summary.reload(true)} />}
+      {tab === "imaging" && <ImagingTab patientId={id} onChanged={() => summary.reload(true)} />}
+      {tab === "checkins" && (
+        <div className="space-y-4 fade-in">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-muted">{checkins.data ? `${checkins.data.length} check-ins in the last 30 days` : "Loading…"}</div>
+            <Button size="sm" variant="teal" onClick={() => setModal("checkin")}><HeartPulse className="size-3.5" />New check-in</Button>
+          </div>
+          {checkins.loading && !checkins.data ? <Skeleton className="h-40 rounded-2xl" /> : <CheckinTrends rows={checkins.data ?? []} />}
+          <Panel title="Check-in history · 30 days" icon={<HeartPulse className="size-4 text-acc" />}>
+            {checkins.loading && !checkins.data ? <SkeletonRows /> : checkins.data?.length ? <CheckinTable rows={checkins.data} limit={31} /> :
+              <Empty icon={<HeartPulse className="size-5" />} title="No check-ins yet">Daily check-ins drive the risk score.</Empty>}
+          </Panel>
+        </div>
+      )}
+
+      {tab === "overview" && (<>
       {/* Gauge + why */}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,360px)_1fr]">
         <Panel className="flex flex-col">
@@ -241,9 +277,12 @@ export default function PatientDetail() {
         </Panel>
       </div>
 
+      <RecordSnapshot data={summary.data} loading={summary.loading} onOpen={setTab} />
+
       {p?.notes && (
         <Panel className="mt-4" title="Clinical notes"><p className="p-5 text-sm text-muted whitespace-pre-wrap">{p.notes}</p></Panel>
       )}
+      </>)}
 
       <Modal open={modal === "checkin"} onClose={() => setModal(null)} title={`New check-in · ${p?.name ?? ""}`} wide>
         {p && <CheckInForm patientId={p.id} sex={p.sex} onHydroxyurea={p.on_hydroxyurea} onCancel={() => setModal(null)}
@@ -253,6 +292,7 @@ export default function PatientDetail() {
             checkins.setData((xs) => [r.checkin, ...(xs ?? []).filter((c: CheckIn) => c.date !== r.checkin.date)]);
             assessments.setData((xs) => [r.assessment, ...(xs ?? [])]);
             patient.reload(true);
+            summary.reload(true);
             window.scrollTo({ top: 0, behavior: "smooth" });
             document.querySelector("main")?.scrollTo({ top: 0, behavior: "smooth" });
           }} />}
@@ -265,7 +305,20 @@ export default function PatientDetail() {
   );
 }
 
-function CheckinTable({ rows }: { rows: CheckIn[] }) {
+function tabDefs(s: { vitals_alerts?: { severity?: string }[]; imaging_flags: { severity: string }[] } | null): TabDef<TabId>[] {
+  const alerts = s?.vitals_alerts ?? [];
+  const severeImg = (s?.imaging_flags ?? []).filter((f) => f.severity === "severe").length;
+  return [
+    { id: "overview", label: "Overview", icon: <LayoutDashboard className="size-4" /> },
+    { id: "vitals", label: "Vitals & devices", icon: <Activity className="size-4" />, badge: alerts.length || null,
+      badgeTone: alerts.some((a) => a.severity !== "moderate") ? "bad" : "warn" },
+    { id: "labs", label: "Labs", icon: <FlaskConical className="size-4" /> },
+    { id: "imaging", label: "Imaging", icon: <ScanEye className="size-4" />, badge: severeImg || null, badgeTone: "bad" },
+    { id: "checkins", label: "Check-ins", icon: <HeartPulse className="size-4" /> },
+  ];
+}
+
+function CheckinTable({ rows, limit = 14 }: { rows: CheckIn[]; limit?: number }) {
   const flagsOf = (c: CheckIn) => [
     c.chest_symptoms && "chest", c.neuro_symptoms && "neuro", c.infection_symptoms && "infection", c.cold_exposure && "cold",
     c.strenuous_activity && "exertion", c.alcohol && "alcohol", c.menstruating && "menses", c.hydroxyurea_taken === false && "missed HU",
@@ -280,13 +333,13 @@ function CheckinTable({ rows }: { rows: CheckIn[] }) {
             <th className="font-medium px-2 py-2.5">Fluids</th>
             <th className="font-medium px-2 py-2.5">Sleep</th>
             <th className="font-medium px-2 py-2.5">Stress</th>
-            <th className="font-medium px-2 py-2.5"><Thermometer className="size-3.5 inline" /></th>
+            <th className="font-medium px-2 py-2.5 whitespace-nowrap"><Thermometer className="size-3.5 inline" /> °C / °F</th>
             <th className="font-medium px-2 py-2.5">SpO₂</th>
             <th className="font-medium px-2 py-2.5">Factors</th>
           </tr>
         </thead>
         <tbody>
-          {rows.slice(0, 14).map((c) => {
+          {rows.slice(0, limit).map((c) => {
             const fl = flagsOf(c);
             return (
               <tr key={c.id} className="border-b border-line/70 last:border-0 hover:bg-hi/40" title={c.notes || undefined}>
@@ -295,7 +348,7 @@ function CheckinTable({ rows }: { rows: CheckIn[] }) {
                 <td className={cx("px-2 py-2.5", c.hydration_litres < 1.5 && "text-warn")}>{c.hydration_litres.toFixed(1)} L</td>
                 <td className={cx("px-2 py-2.5", c.sleep_hours < 6 && "text-warn")}>{c.sleep_hours} h</td>
                 <td className="px-2 py-2.5">{c.stress}</td>
-                <td className={cx("px-2 py-2.5", c.temperature_c >= 38.5 ? "text-bad font-semibold" : c.temperature_c >= 37.8 && "text-warn")}>{c.temperature_c.toFixed(1)}</td>
+                <td className={cx("px-2 py-2.5 whitespace-nowrap", c.temperature_c >= 38.5 ? "text-bad font-semibold" : c.temperature_c >= 37.8 && "text-warn")}>{fmtTempShort(c.temperature_c)}</td>
                 <td className={cx("px-2 py-2.5", c.spo2 != null && c.spo2 < 94 && "text-bad font-semibold")}>{c.spo2 ?? "—"}</td>
                 <td className="px-2 py-2.5">
                   <div className="flex flex-wrap gap-1">

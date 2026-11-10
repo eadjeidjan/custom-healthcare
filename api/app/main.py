@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from app import assistant, db, rag, risk, seed
 from app.config import VERSION, get_settings
-from app.routers import ai, core, patients
+from app.routers import ai, core, patients, policy, portal, records
 from app.security import hash_password
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -62,7 +62,7 @@ def create_app() -> FastAPI:
                   docs_url=None if s.is_production else "/api/docs", openapi_url="/api/openapi.json")
     app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in s.cors_origins.split(",") if o.strip()],
                        allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-    for r in (core.router, patients.router, ai.router):
+    for r in (core.router, patients.router, ai.router, records.router, portal.router, policy.router):
         app.include_router(r, prefix="/api/v1")
     return app
 

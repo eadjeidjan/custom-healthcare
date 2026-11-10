@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Activity, BrainCircuit, LogIn, ShieldCheck } from "lucide-react";
+import { Activity, BrainCircuit, Building2, HeartPulse, LogIn, ShieldCheck, Stethoscope } from "lucide-react";
 import { useSession } from "../lib/session";
 import { Button, ErrorNote, Field, Input } from "../components/ui";
 import Logo from "../components/Logo";
@@ -21,7 +21,7 @@ export default function Login() {
     try {
       await signIn(email.trim(), password);
       const from = (loc.state as { from?: string } | null)?.from;
-      nav(from && from !== "/login" ? from : "/", { replace: true });
+      nav(from && from !== "/login" ? from : "/", { replace: true });  // App sends each role to its own interface
     } catch (ex) {
       setErr((ex as Error).message || "Sign-in failed");
     } finally { setBusy(false); }
@@ -44,7 +44,7 @@ export default function Login() {
           </h1>
           <p className="text-muted mt-4 leading-relaxed max-w-md">
             Daily check-ins, a calibrated 7-day vaso-occlusive crisis risk model, and an AI care assistant grounded in
-            sickle cell guidelines — for the whole care team.
+            sickle cell guidelines — for care teams, patients at home and the people who plan services.
           </p>
           <div className="mt-8 grid gap-3 max-w-md">
             {[
@@ -69,7 +69,21 @@ export default function Login() {
             </div>
           </div>
           <h2 className="text-xl font-semibold">Sign in</h2>
-          <p className="text-sm text-muted mt-1 mb-6">Care team access</p>
+          <p className="text-sm text-muted mt-1 mb-4">One sign-in, the right view for each role</p>
+          <div className="grid grid-cols-3 gap-2 mb-6">
+            {[
+              { icon: Stethoscope, t: "Care providers", e: "clinician@sickleguard.local" },
+              { icon: HeartPulse, t: "Patients", e: "patient@sickleguard.local" },
+              { icon: Building2, t: "Policy makers", e: "policy@sickleguard.local" },
+            ].map(({ icon: I, t, e }) => (
+              <button key={t} type="button" onClick={() => setEmail(e)} title={`Demo: ${e}`}
+                className={"rounded-xl border px-2 py-2.5 text-center transition hover:border-teal/60 " +
+                  (email === e ? "border-teal/70 bg-teal/10" : "border-line")}>
+                <I className="size-4 mx-auto text-teal" />
+                <div className="text-[11px] mt-1 leading-tight text-muted">{t}</div>
+              </button>
+            ))}
+          </div>
           <div className="space-y-4">
             <Field label="Email">
               <Input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@clinic.org" autoFocus />

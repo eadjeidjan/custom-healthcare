@@ -32,7 +32,7 @@ In sickle cell disease, repeated sickling damages the spleen from early childhoo
 
 ## Fever is an emergency in sickle cell disease
 
-In sickle cell disease, fever must be treated as a possible serious infection until proven otherwise. NHLBI recommends urgent evaluation for a temperature of 38.5 °C (101.3 °F) or higher, including history and examination, full blood count with reticulocytes, blood culture and, in many protocols, prompt parenteral antibiotics; many local and paediatric protocols use 38.0 °C. Fever may also be the first sign of ACS. Patients should not delay seeking care or treat a fever at home without advice.
+In sickle cell disease, fever must be treated as a possible serious infection until proven otherwise. NHLBI recommends urgent evaluation for a temperature of 38.5 °C (101.3 °F) or higher, including history and examination, full blood count with reticulocytes, blood culture and, in many protocols, prompt parenteral antibiotics; many local and paediatric protocols use 38.0 °C (100.4 °F). Fever may also be the first sign of ACS. Patients should not delay seeking care or treat a fever at home without advice.
 
 ## Preventing infection in sickle cell disease
 

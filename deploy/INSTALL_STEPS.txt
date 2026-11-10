@@ -1,0 +1,129 @@
+SICKLEGUARD - SERVER INSTALLATION, STEP BY STEP
+===============================================
+For the Kasada/CustoCare server (5.199.170.132), folder /opt/kasada/SickleGuard (beside /opt/kasada/CustoCareAI
+and /opt/kasada/eCourier). SickleGuard goes behind CustoCare's front proxy (kasada-edge), like eCourier and AHPC.
+Everything else on the server keeps running.
+
+  Live:  https://sickleguard.kasadaai.com      (Compose project sickleguard-live)
+
+RULES
+- Log in as your normal user (the one that runs kasada and ecourier). Not as root; use sudo only where shown.
+- Never paste keys, tokens or passwords into chat, e-mail or tickets. Secrets are typed at hidden prompts only.
+- Replace anything in <angle brackets> with the real value, and remove the brackets.
+- More detail: docs/DEPLOY.md in the repository.
+
+
+STEP 1 - DNS RECORD (at the DNS provider for kasadaai.com)
+----------------------------------------------------------
+Add an A record:  sickleguard.kasadaai.com  ->  5.199.170.132
+Do not change any other kasadaai.com record. Check from the server (new records can take up to an hour):
+  getent hosts sickleguard.kasadaai.com
+Expected: a line starting with 5.199.170.132.
+
+
+STEP 2 - CHECK CUSTOCARE'S FRONT PROXY (read-only)
+--------------------------------------------------
+  cd /opt/kasada/CustoCareAI
+  kasada edge status
+  docker inspect kasada-edge-proxy-1 --format '{{.State.Running}} {{range .Mounts}}{{.Destination}} {{end}}'
+Expected: "true" and /etc/kasada-edge/extra in the list (eCourier already needed it).
+If it is missing:  kasada update --apply   (CustoCare's own procedure), then check again.
+
+
+STEP 3 - GET SICKLEGUARD
+------------------------
+You need an Azure DevOps personal access token (Code: Read). It is used for this one command and never saved:
+it goes to git through environment variables, not the command line, so it does not show in `ps` or the history.
+
+  cd /opt/kasada
+  read -rsp "Azure DevOps token: " PAT; echo
+  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader \
+  GIT_CONFIG_VALUE_0="Authorization: Basic $(printf ':%s' "$PAT" | base64 -w0)" \
+    git clone https://eadjeidjan.visualstudio.com/custom-healthcare/_git/custom-healthcare SickleGuard
+  unset PAT
+  cd SickleGuard
+  git config --get http.extraHeader || echo "token not stored (good)"
+Expected: the clone finishes without asking for anything, and "token not stored (good)".
+(Equivalent one-off form: git -c http.extraHeader="Authorization: Basic ..." clone ... ; the environment form above
+keeps the token out of the process list.)
+
+
+STEP 4 - INSTALL THE sickleguard COMMAND
+----------------------------------------
+  cd /opt/kasada/SickleGuard
+  cli/install.sh
+It installs Go 1.27 into /usr/local/go if needed (asks first; checksum verified), builds the CLI and puts
+sickleguard (and the short alias sg) into /usr/local/bin (asks for your sudo password). Then:
+  sickleguard version
+Expected: "sickleguard 1.0.0 ..." and "repository /opt/kasada/SickleGuard ...". From now on sickleguard works from
+any folder.
+
+
+STEP 5 - SETTINGS, CHECK, DEPLOY (5 to 15 minutes the first time)
+------------------------------------------------------------------
+<your email> gets the HTTPS certificate notices.
+
+  sickleguard init --instance live --domain sickleguard.kasadaai.com --email <your email>
+Press Enter to accept the suggested values (web port, public URL https://sickleguard.kasadaai.com, admin e-mail).
+Demo patients: answer N. OpenAI key: paste it at the hidden prompt (or press Enter and add it later with
+`sickleguard env set OPENAI_API_KEY --instance live`).
+Expected: "kasada-edge-proxy-1 found: HTTPS through the shared front proxy (kasada mode)" and
+"deploy/live.env created (mode 600)".
+
+  sickleguard check --instance live
+Expected: "edge: kasada mode", "DNS: sickleguard.kasadaai.com -> 5.199.170.132 (this host)", 0 problems.
+
+  sickleguard deploy --instance live 2>&1 | tee -a ~/sickleguard-install.log
+It builds the images (the risk model is trained during the build), starts everything, checks health, signs in
+as the administrator, then writes sickleguard.caddy into kasada-edge's extra-sites folder, validates and reloads
+kasada-edge. Expected at the end:
+  "smoke test: admin sign-in and dashboard work"
+  "front proxy: wrote .../sickleguard.caddy, validated and reloaded kasada-edge-proxy-1"
+  "SickleGuard live is up: https://sickleguard.kasadaai.com"
+
+
+STEP 6 - VERIFY
+---------------
+  sickleguard status --instance live
+  sickleguard edge status --instance live
+  curl -sI https://sickleguard.kasadaai.com | head -1
+  curl -s https://sickleguard.kasadaai.com/api/v1/health; echo
+Expected: all containers running/healthy; "kasada mode", "... has sickleguard.kasadaai.com -> sickleguard-live-web:80",
+a Let's Encrypt certificate; "HTTP/2 200"; {"ok":true,...}.
+Then check the neighbours still open: https://resto.custocareai.com and https://ecourier2.iasghana.com
+
+
+STEP 7 - SIGN IN
+----------------
+  sickleguard env get ADMIN_PASSWORD --instance live --show
+Sign in at https://sickleguard.kasadaai.com with admin@sickleguard.local (or the admin e-mail you chose) and that
+password; put it in your password manager. Accounts for the care team:
+  sickleguard users create <email> --name "<name>" --role clinician --instance live
+(roles: admin, clinician, patient, policy; the password is typed hidden, or generated and shown once.)
+
+
+STEP 8 - BACKUPS AND UPDATES
+----------------------------
+A backup now:   sickleguard backup --instance live --keep 14       (kept in /opt/kasada/SickleGuard/backups)
+Nightly (crontab -e, then add this line):
+  30 2 * * * /usr/local/bin/sickleguard backup --instance live --keep 14 >> ~/sickleguard-backup.log 2>&1
+
+After new SickleGuard code is pushed to Azure DevOps:
+  sickleguard update --instance live --ask-pat
+It asks for the token (hidden, used for this pull only), backs up, builds, starts the new version and checks it;
+if the new version is not healthy it rolls back to the previous one by itself. Going back by hand:
+  sickleguard rollback --instance live
+
+
+IF SOMETHING GOES WRONG
+-----------------------
+  "has no extra-sites folder"            cd /opt/kasada/CustoCareAI && kasada update --apply ; then sickleguard edge sync --instance live
+  "kasada-edge-proxy-1 is not running"   cd /opt/kasada/CustoCareAI && kasada edge up ; then sickleguard edge sync --instance live
+  "kasada-edge validate failed"          The previous file was put back and nothing changed; send the message.
+  "permission denied ... docker.sock"    Log out and in again, or ask to be added to the docker group.
+  "sickleguard: command not found"       Run step 4 again, then open a new SSH session.
+  No padlock / certificate error         DNS must point at 5.199.170.132 (step 1); wait a few minutes.
+  502 Bad Gateway                         sickleguard deploy --instance live --no-build ; then sickleguard edge status --instance live
+  Anything else                          sickleguard check --instance live ; sickleguard logs api --instance live
+                                         tail -n 30 /opt/kasada/SickleGuard/deploy/logs/events.log
+Running step 5 again is safe: init refuses to overwrite existing settings, and deploy never deletes data.

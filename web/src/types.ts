@@ -1,7 +1,7 @@
 // Types matching docs/API.md (SickleGuard API v1).
 
-export type Role = "admin" | "clinician";
-export interface User { id: string; email: string; name: string; role: Role }
+export type Role = "admin" | "clinician" | "patient" | "policy";
+export interface User { id: string; email: string; name: string; role: Role; patient_id?: string | null }
 
 export interface Health {
   ok: boolean; version: string; openai: boolean; qdrant: boolean; mcp: boolean;
@@ -96,9 +96,21 @@ export interface Doc {
   error: string | null; created_at: string;
 }
 
+export type FeatureGroup = "check-in" | "device" | "lab" | "imaging" | "history";
 export interface ModelCard {
   version: string; trained_at: string; algorithm: string; training_rows: number; positive_rate: number;
   auc: number; brier: number; thresholds: { moderate: number; high: number; critical: number };
-  features: { key: string; label: string; weight: number; description: string }[];
+  /** weight = signed permutation importance (drop in AUPRC x100 when shuffled); group = data source */
+  features: { key: string; label: string; weight: number; description: string; group?: FeatureGroup }[];
   data_note: string; limitations: string[];
+  auprc?: number;
+  /** calibration on held-out (simulated) patients: mean predicted vs observed 7-day VOC rate per risk bin */
+  calibration?: { bin: string; predicted: number; observed: number; n: number }[];
+  operating_points?: { level: RiskLevel; threshold: number; sensitivity: number; specificity: number; ppv: number;
+    alerts_per_100_weeks: number }[];
+  comparison?: { algorithm: string; auroc: number; auprc: number; brier: number }[];
+  cohort?: { patients: number; patient_days: number; events: number; source: "synthetic" | "real" };
+  feature_groups?: { group: FeatureGroup; features: string[] }[];
+  lead_time_days?: number | null;
+  temporal?: { auroc: number; auprc: number; brier: number; period: string } | null;
 }

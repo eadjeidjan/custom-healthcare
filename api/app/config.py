@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     admin_password: str = ""
     cors_origins: str = "http://localhost:5310"
     seed_demo: bool = True
+    # password for the demo accounts of each role (clinician@, patient@, policy@sickleguard.local); empty = none
+    demo_password: str = ""
+    # uploaded files (imaging) live here; a Docker volume in production
+    data_dir: str = "data"
+    # sample IoT feed for simulated devices; unset = on in development with Postgres, off in production and tests
+    simulate_devices: bool | None = None
 
     @property
     def is_production(self) -> bool:

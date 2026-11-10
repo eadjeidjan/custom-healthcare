@@ -1,0 +1,7 @@
+# Instance settings hold secrets; logs and state are per server.
+*.env
+*.env.bak
+*.env.tmp
+!env.example
+logs/
+edge/*.bak

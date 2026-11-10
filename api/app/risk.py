@@ -1,58 +1,55 @@
-"""The VOC risk model.
+"""The VOC risk model (v2).
 
-1. `features()` turns a patient and their recent daily check-ins into numbers (hydration deficit, fever, missed
-   hydroxyurea, Hb drop from baseline, ...).
-2. A logistic regression (scikit-learn) gives the probability of a vaso-occlusive crisis in the next 7 days. It is
-   trained on a synthetic cohort whose risk follows published triggers and markers; swap in real outcome data
-   (the `crises` table) to retrain before any clinical use.
-3. `explain()` says how many score points each factor adds or removes (risk now minus risk with that factor normal).
-4. `red_flags()` are fixed safety rules that do not depend on the model: they always win.
+1. `features.build()` turns everything known about a patient (check-ins, IoT device readings vs their own baseline,
+   EMR labs, imaging findings, crisis history, profile) into one vector as of a date (see `app/features.py`).
+2. A calibrated classifier (gradient boosting or logistic regression, chosen by `python -m app.train`) gives the
+   probability of a vaso-occlusive crisis in the next 7 days. It is trained on a **synthetic** cohort from
+   `app/simulator.py` (literature-calibrated); retrain on real outcomes (the `crises` table) before any clinical use.
+3. `explain()` says how many score points each factor adds or removes (risk now minus risk with that factor at its
+   normal value) - works for any model.
+4. `red_flags()` are fixed safety rules (check-ins, thermometer, pulse oximeter, labs). They always win.
 """
+from __future__ import annotations
+
+import logging
 import threading
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from statistics import mean
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import joblib
 import numpy as np
 
-MODEL_VERSION = "voc-lr-1.0"
+from app import features as F
+from app.units import temp
+
+log = logging.getLogger("app.risk")
+SCHEMA = 2                      # feature-vector schema; a saved model with another schema is retrained
+MODEL_VERSION = "voc-gbm-2.0"   # default; the saved bundle carries the real version (voc-gbm-2.0 / voc-lr-2.0)
 MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "voc_model.joblib"
-THRESHOLDS = {"moderate": 0.10, "high": 0.25, "critical": 0.50}
+# Probability of a crisis in the next 7 days. The simulated base rate is ~1.2 %, so "high" is >10x average.
+THRESHOLDS = {"moderate": 0.04, "high": 0.10, "critical": 0.25}
 
-# key, label, description, the "normal" value used to explain impact, and the synthetic cohort's true weight
-FEATURES: list[tuple[str, str, str, float, float]] = [
-    ("pain", "Pain today", "Pain score 0-10 on the latest check-in", 0, 0.22),
-    ("pain_trend", "Pain rising", "Latest pain minus the average of the 3 days before", 0, 0.18),
-    ("low_hydration", "Low fluid intake", "Litres below 2.5 L a day (3-day average)", 0, 0.70),
-    ("short_sleep", "Short sleep", "Hours below 7 a night (3-day average)", 0, 0.18),
-    ("stress", "Stress", "Stress 0-10 (3-day average)", 2, 0.08),
-    ("fever", "Raised temperature", "Degrees above 37.5 °C", 0, 0.90),
-    ("low_spo2", "Low oxygen", "SpO2 points below 95 %", 0, 0.25),
-    ("cold", "Cold exposure", "Cold or wind exposure in the last 3 days", 0, 0.60),
-    ("infection", "Infection symptoms", "Infection symptoms in the last 3 days", 0, 0.80),
-    ("menstruating", "Menstruation", "Menstruating on the latest check-in", 0, 0.35),
-    ("alcohol", "Alcohol", "Alcohol in the last 3 days", 0, 0.40),
-    ("exertion", "Strenuous activity", "Strenuous activity in the last 3 days", 0, 0.35),
-    ("missed_hu", "Missed hydroxyurea", "Share of the last 7 days hydroxyurea was missed (if prescribed)", 0, 1.00),
-    ("hb_drop", "Hb below baseline", "g/dL below the patient's baseline haemoglobin", 0, 0.35),
-    ("high_wbc", "High white cells", "WBC above 11 x10^9/L", 0, 0.12),
-    ("high_retic", "High reticulocytes", "Reticulocytes above 12 %", 0, 0.06),
-    ("high_ldh", "High LDH", "LDH above 500 U/L, per 100", 0, 0.30),
-    ("prior_crises", "Crises in last 12 months", "Number of VOCs in the last 12 months (max 12)", 0, 0.15),
-    ("severe_genotype", "Severe genotype", "HbSS or HbSβ0", 0, 0.50),
-    ("low_hbf", "Low foetal haemoglobin", "How far HbF is below 10 % (0-1; unknown counts as 0.5)", 0, 0.60),
-    ("on_hu", "On hydroxyurea", "Prescribed hydroxyurea (protective)", 0, -0.50),
+FEATURES = F.FEATURES
+KEYS = F.KEYS
+LABELS = F.LABELS
+NORMAL = F.NORMAL
+LIMITATIONS = [
+    "Synthetic training data: the numbers show how the system works, not real-world accuracy.",
+    "Must be retrained and validated on real, consented patient outcomes before any clinical use.",
+    "Pre-crisis changes in device signals are weakly evidenced (small pilots); the simulator assumes small 1-3 day "
+    "drifts, so real device value may be lower.",
+    "Self-reported check-ins can be missing or inaccurate; missing values count as normal (with a missing flag).",
+    "Pulse oximeters can over-read SpO2 on darker skin; wrist skin temperature is not core temperature.",
+    "Red-flag rules always override the model and must be reviewed by the clinical team.",
+    "Not a medical device; supports, never replaces, clinical judgement.",
 ]
-KEYS = [f[0] for f in FEATURES]
-LABELS = {f[0]: f[1] for f in FEATURES}
-NORMAL = np.array([f[3] for f in FEATURES], dtype=float)
-TRUE_W = np.array([f[4] for f in FEATURES], dtype=float)
-TRUE_B = -6.0
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# Inputs kept for backwards compatibility (tests, simple callers): a profile plus daily check-ins
+# ---------------------------------------------------------------------------------------------------------------
 @dataclass
 class Day:
     """One check-in as the model sees it (works for ORM rows and plain dicts)."""
@@ -90,146 +87,137 @@ class Profile:
     hb_baseline: float
     hbf_percent: Optional[float]
     crises_12m: int
+    date_of_birth: Optional[date] = None
 
     @classmethod
     def of(cls, p) -> "Profile":
-        return cls(p.genotype, bool(p.on_hydroxyurea), float(p.hb_baseline), p.hbf_percent, int(p.crises_12m or 0))
+        return cls(p.genotype, bool(p.on_hydroxyurea), float(p.hb_baseline), p.hbf_percent, int(p.crises_12m or 0),
+                   getattr(p, "date_of_birth", None))
 
 
-def _latest(days: Sequence[Day], attr: str, within: int = 14):
-    if not days:
-        return None
-    ref = days[0].date
-    for d in days:
-        v = getattr(d, attr)
-        if v is not None and (ref - d.date).days <= within:
-            return v
-    return None
+# ---------------------------------------------------------------------------------------------------------------
+# Model objects (pickled in the bundle, so they live here)
+# ---------------------------------------------------------------------------------------------------------------
+class ColumnSubset:
+    """Fit/predict an estimator on some columns only (ablations)."""
+
+    def __init__(self, est, cols: list[int]):
+        self.est, self.cols = est, list(cols)
+
+    def fit(self, X, y):
+        self.est.fit(X[:, self.cols], y)
+        return self
+
+    def predict_proba(self, X):
+        return self.est.predict_proba(X[:, self.cols])
 
 
-def features(profile: Profile, days: Sequence[Day]) -> np.ndarray:
-    """`days` newest first. Returns the vector in FEATURES order."""
-    days = sorted(days, key=lambda d: d.date, reverse=True)
-    if not days:
-        days = [Day(date=date.today())]
-    t = days[0]
-    last3 = days[:3]
-    prev3 = days[1:4]
-    pain_trend = t.pain - mean(d.pain for d in prev3) if prev3 else 0.0
-    hu = 0.0
-    if profile.on_hydroxyurea:
-        known = [d.hydroxyurea_taken for d in days[:7] if d.hydroxyurea_taken is not None]
-        hu = (sum(1 for k in known if not k) / len(known)) if known else 0.0
-    hb, wbc, retic, ldh = (_latest(days, a) for a in ("hb", "wbc", "retic_percent", "ldh"))
-    hbf = profile.hbf_percent
-    f = {
-        "pain": t.pain,
-        "pain_trend": max(-5.0, min(8.0, pain_trend)),
-        "low_hydration": max(0.0, 2.5 - mean(d.hydration_litres for d in last3)),
-        "short_sleep": max(0.0, 7 - mean(d.sleep_hours for d in last3)),
-        "stress": mean(d.stress for d in last3),
-        "fever": max(0.0, t.temperature_c - 37.5),
-        "low_spo2": max(0.0, 95 - t.spo2) if t.spo2 is not None else 0.0,
-        "cold": float(any(d.cold_exposure for d in last3)),
-        "infection": float(any(d.infection_symptoms for d in last3)),
-        "menstruating": float(bool(t.menstruating)),
-        "alcohol": float(any(d.alcohol for d in last3)),
-        "exertion": float(any(d.strenuous_activity for d in last3)),
-        "missed_hu": hu,
-        "hb_drop": max(0.0, profile.hb_baseline - hb) if hb is not None else 0.0,
-        "high_wbc": max(0.0, wbc - 11) if wbc is not None else 0.0,
-        "high_retic": max(0.0, retic - 12) if retic is not None else 0.0,
-        "high_ldh": max(0.0, ldh - 500) / 100 if ldh is not None else 0.0,
-        "prior_crises": float(min(12, profile.crises_12m)),
-        "severe_genotype": float(profile.genotype in ("HbSS", "HbSβ0")),
-        "low_hbf": 0.5 if hbf is None else max(0.0, min(1.0, (10 - hbf) / 10)),
-        "on_hu": float(profile.on_hydroxyurea),
-    }
-    return np.array([f[k] for k in KEYS], dtype=float)
+class SignedLogistic:
+    """Logistic regression whose coefficients respect `features.DIRECTION`: features that come out with the wrong
+    sign are dropped and the model refitted (a few rounds). Keeps explanations clinically coherent."""
+
+    def __init__(self, directions: list[int], C: float = 0.3):
+        self.directions, self.C = list(directions), C
+        self.cols: list[int] = []
+        self.pipe = None
+
+    def fit(self, X, y):
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
+        cols = [j for j in range(X.shape[1]) if np.ptp(X[:, j]) > 0]
+        for _ in range(6):
+            pipe = make_pipeline(StandardScaler(), LogisticRegression(C=self.C, max_iter=3000)).fit(X[:, cols], y)
+            coef = pipe[-1].coef_[0]
+            bad = {c for c, w in zip(cols, coef) if self.directions[c] * w < 0}
+            if not bad:
+                break
+            cols = [c for c in cols if c not in bad]
+        self.cols, self.pipe = cols, pipe
+        return self
+
+    def predict_proba(self, X):
+        return self.pipe.predict_proba(np.asarray(X)[:, self.cols])
+
+    def weights(self) -> dict[int, float]:
+        return {c: float(w / s) for c, w, s in zip(self.cols, self.pipe[-1].coef_[0], self.pipe[0].scale_)}
 
 
-# ---------- synthetic cohort and training ----------
+class CalibratedModel:
+    """A fitted classifier plus a calibrator learned on separate (calibration) patients."""
 
-def synthetic_cohort(n: int = 24000, seed: int = 7) -> tuple[np.ndarray, np.ndarray]:
-    """Rows of plausible patient-days; the label is drawn from a known risk function so the model's job is real
-    (noisy, imbalanced) but the truth is documented."""
-    r = np.random.default_rng(seed)
-    severe = r.random(n) < 0.65
-    on_hu = r.random(n) < np.where(severe, 0.6, 0.25)
-    risky_day = r.random(n) < 0.25          # some days are bad days: several triggers together
-    X = np.zeros((n, len(KEYS)))
-    col = {k: i for i, k in enumerate(KEYS)}
-    X[:, col["pain"]] = np.clip(r.poisson(np.where(risky_day, 3.5, 1.2)), 0, 10)
-    X[:, col["pain_trend"]] = np.clip(r.normal(np.where(risky_day, 1.5, 0), 1.3), -5, 8)
-    X[:, col["low_hydration"]] = np.clip(r.normal(np.where(risky_day, 0.9, 0.2), 0.45), 0, 2.5)
-    X[:, col["short_sleep"]] = np.clip(r.normal(np.where(risky_day, 1.8, 0.5), 1.0), 0, 6)
-    X[:, col["stress"]] = np.clip(r.normal(np.where(risky_day, 5.5, 3), 1.8), 0, 10)
-    fever = r.random(n) < np.where(risky_day, 0.15, 0.02)
-    X[:, col["fever"]] = np.where(fever, r.uniform(0.3, 2.0, n), 0)
-    X[:, col["low_spo2"]] = np.clip(r.normal(np.where(severe, 1.5, 0.3), 1.2), 0, 10)
-    X[:, col["cold"]] = r.random(n) < np.where(risky_day, 0.35, 0.08)
-    X[:, col["infection"]] = r.random(n) < np.where(risky_day, 0.3, 0.05)
-    X[:, col["menstruating"]] = r.random(n) < 0.08
-    X[:, col["alcohol"]] = r.random(n) < np.where(risky_day, 0.2, 0.06)
-    X[:, col["exertion"]] = r.random(n) < np.where(risky_day, 0.3, 0.1)
-    X[:, col["missed_hu"]] = np.where(on_hu, np.clip(r.beta(1.2, np.where(risky_day, 2.5, 6.0)), 0, 1), 0)
-    X[:, col["hb_drop"]] = np.clip(r.normal(np.where(risky_day, 0.8, 0.1), 0.6), 0, 4)
-    X[:, col["high_wbc"]] = np.clip(r.normal(np.where(severe, 1.5, 0.3), 1.5), 0, 10)
-    X[:, col["high_retic"]] = np.clip(r.normal(np.where(severe, 2, 0.5), 2), 0, 15)
-    X[:, col["high_ldh"]] = np.clip(r.normal(np.where(severe, 1.2, 0.3), 1.0), 0, 6)
-    X[:, col["prior_crises"]] = np.clip(r.poisson(np.where(severe, 2.2, 0.8)), 0, 12)
-    X[:, col["severe_genotype"]] = severe
-    X[:, col["low_hbf"]] = np.clip(r.normal(np.where(on_hu, 0.45, 0.75), 0.2), 0, 1)
-    X[:, col["on_hu"]] = on_hu
-    logit = TRUE_B + X @ TRUE_W + r.normal(0, 0.6, n)
-    y = (r.random(n) < 1 / (1 + np.exp(-logit))).astype(int)
-    return X, y
+    def __init__(self, base, method: str, cal):
+        self.base, self.method, self.cal = base, method, cal
+
+    @classmethod
+    def fit(cls, base, raw: np.ndarray, y: np.ndarray, method: str) -> "CalibratedModel":
+        if method == "isotonic":
+            from sklearn.isotonic import IsotonicRegression
+            cal = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0).fit(raw, y)
+        else:
+            from sklearn.linear_model import LogisticRegression
+            cal = LogisticRegression(C=1e4, max_iter=1000).fit(_logit(raw).reshape(-1, 1), y)
+        return cls(base, method, cal)
+
+    def predict_proba(self, X) -> np.ndarray:
+        raw = self.base.predict_proba(X)[:, 1]
+        if self.method == "isotonic":
+            p = self.cal.predict(raw)
+        else:
+            p = self.cal.predict_proba(_logit(raw).reshape(-1, 1))[:, 1]
+        p = np.clip(p, 1e-4, 1 - 1e-4)
+        return np.column_stack([1 - p, p])
 
 
+def _logit(p: np.ndarray) -> np.ndarray:
+    p = np.clip(p, 1e-6, 1 - 1e-6)
+    return np.log(p / (1 - p))
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Loading
+# ---------------------------------------------------------------------------------------------------------------
 _lock = threading.Lock()
 _bundle: Optional[dict] = None
 
 
-def train(path: Path = MODEL_PATH) -> dict:
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import brier_score_loss, roc_auc_score
-    from sklearn.model_selection import train_test_split
-    from sklearn.pipeline import make_pipeline
-    from sklearn.preprocessing import StandardScaler
-
-    X, y = synthetic_cohort()
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25, random_state=7, stratify=y)
-    pipe = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000, C=1.0))
-    pipe.fit(Xtr, ytr)
-    p = pipe.predict_proba(Xte)[:, 1]
-    lr = pipe[-1]
-    scale = pipe[0].scale_
-    bundle = {
-        "pipe": pipe, "version": MODEL_VERSION,
-        "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "training_rows": int(len(Xtr)), "positive_rate": round(float(y.mean()), 3),
-        "auc": round(float(roc_auc_score(yte, p)), 3), "brier": round(float(brier_score_loss(yte, p)), 4),
-        "weights": {k: round(float(c / s), 4) for k, c, s in zip(KEYS, lr.coef_[0], scale)},
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(bundle, path)
-    return bundle
+def _compatible(b: dict) -> bool:
+    return b.get("schema") == SCHEMA and b.get("keys") == list(KEYS) and "model" in b
 
 
 def model() -> dict:
+    """The saved model (fast). If there is none (or it is from an older feature schema), train a small one now
+    (~10 s); `python -m app.train` gives the full model and the report."""
     global _bundle
     with _lock:
         if _bundle is None:
+            b = None
             try:
                 b = joblib.load(MODEL_PATH)
-                _bundle = b if b.get("version") == MODEL_VERSION else train()
-            except Exception:  # noqa: BLE001 - missing or unreadable: train a fresh one (about a second)
-                _bundle = train()
+            except Exception:  # noqa: BLE001 - missing or unreadable
+                b = None
+            if not b or not _compatible(b):
+                from app import train
+                log.warning("No compatible saved VOC model: training a small one now (run `python -m app.train` "
+                            "for the full model and docs/MODEL_REPORT.md).")
+                b = train.quick(MODEL_PATH)
+            _bundle = b
         return _bundle
 
 
+def reload() -> dict:
+    global _bundle
+    with _lock:
+        _bundle = None
+    return model()
+
+
+def probabilities(X: np.ndarray) -> np.ndarray:
+    return model()["model"].predict_proba(np.asarray(X, dtype=float).reshape(-1, len(KEYS)))[:, 1]
+
+
 def probability(x: np.ndarray) -> float:
-    return float(model()["pipe"].predict_proba(x.reshape(1, -1))[0, 1])
+    return float(probabilities(x.reshape(1, -1))[0])
 
 
 def level_for(p: float) -> str:
@@ -242,81 +230,160 @@ def level_for(p: float) -> str:
     return "low"
 
 
-def _fmt(key: str, v: float, profile: Profile, days: Sequence[Day]) -> str:
-    t = days[0] if days else None
+# ---------------------------------------------------------------------------------------------------------------
+# Explanations
+# ---------------------------------------------------------------------------------------------------------------
+def _pair(info: dict, key: str, fmt: str) -> Optional[str]:
+    v = info.get(key)
+    if not v:
+        return None
+    return fmt.format(now=v[0], base=v[1])
+
+
+def _fmt(key: str, v: float, fs: F.FeatureSet, patient: Any) -> str:
+    i = fs.info
+    s = None
     match key:
-        case "pain": return f"{v:.0f}/10"
-        case "pain_trend": return f"{v:+.1f} vs previous days"
-        case "low_hydration": return f"{2.5 - v:.1f} L/day"
-        case "short_sleep": return f"{7 - v:.1f} h/night"
-        case "stress": return f"{v:.0f}/10"
-        case "fever": return f"{t.temperature_c:.1f} °C" if t else f"+{v:.1f} °C"
-        case "low_spo2": return f"{95 - v:.0f} %"
-        case "missed_hu": return f"missed {v:.0%} of days"
-        case "hb_drop": return f"{v:.1f} g/dL below baseline {profile.hb_baseline:g}"
-        case "high_wbc": return f"{v + 11:.1f} x10⁹/L"
-        case "high_retic": return f"{v + 12:.1f} %"
-        case "high_ldh": return f"{v * 100 + 500:.0f} U/L"
-        case "prior_crises": return f"{v:.0f}"
-        case "severe_genotype": return profile.genotype
-        case "low_hbf": return "unknown" if profile.hbf_percent is None else f"HbF {profile.hbf_percent:g} %"
-        case _: return "yes" if v else "no"
+        case "pain": s = f"{v:.0f}/10"
+        case "pain_trend": s = f"{v:+.1f} vs previous days"
+        case "low_hydration": s = f"{i['hydration']:.1f} L/day" if "hydration" in i else None
+        case "short_sleep": s = f"{i['sleep']:.1f} h/night" if "sleep" in i else None
+        case "stress": s = f"{v:.0f}/10"
+        case "fever": s = temp(i["temp"]) if "temp" in i else f"+{v:.1f} °C (+{v * 1.8:.1f} °F)"
+        case "low_spo2": s = f"{i['spo2_now']:.0f} %" if "spo2_now" in i else None
+        case "missed_hu": s = f"missed {v:.0%} of days"
+        case "hr_rise": s = _pair(i, "hr", "{now:.0f} bpm (usual {base:.0f})")
+        case "hrv_drop": s = _pair(i, "hrv", "{now:.0f} ms (usual {base:.0f})")
+        case "spo2_drop": s = _pair(i, "spo2", "{now:.1f} % (usual {base:.1f})")
+        case "spo2_night_low": s = f"lowest {i['spo2_min']:.0f} %" if "spo2_min" in i else None
+        case "skin_temp_rise": s = f"+{v:.1f} °C (+{v * 1.8:.1f} °F) vs usual"
+        case "steps_drop": s = _pair(i, "steps", "{now:,.0f} steps (usual {base:,.0f})")
+        case "sleep_loss": s = _pair(i, "sleep_dev", "{now:.1f} h (usual {base:.1f})")
+        case "fluid_drop": s = _pair(i, "fluid", "{now:.1f} L (usual {base:.1f})")
+        case "resp_rise": s = _pair(i, "resp", "{now:.0f}/min (usual {base:.0f})")
+        case "hb_drop":
+            s = f"{v:.1f} g/dL below baseline {F.get(patient, 'hb_baseline', 0):g}"
+        case "high_wbc": s = f"{i['wbc']:.1f} x10⁹/L" if "wbc" in i else None
+        case "wbc_rise": s = f"{v:+.1f} x10⁹/L vs earlier results"
+        case "high_retic": s = f"{i['retic']:.1f} %" if "retic" in i else None
+        case "high_ldh": s = f"{i['ldh']:.0f} U/L" if "ldh" in i else None
+        case "high_crp": s = f"{i['crp']:.0f} mg/L" if "crp" in i else None
+        case "prior_crises": s = f"{v:.0f}"
+        case "recent_crisis": s = f"crisis on {i['last_crisis']}" if "last_crisis" in i else "yes"
+        case "severe_genotype": s = str(F.get(patient, "genotype", ""))
+        case "low_hbf": s = "unknown" if i.get("hbf") is None else f"HbF {float(i['hbf']):g} %"
+        case "tcd_risk": s = "abnormal" if v >= 2 else "conditional"
+        case "on_hu": s = "yes" if v else "no"
+    return s if s is not None else ("yes" if v else "no")
 
 
-def explain(x: np.ndarray, profile: Profile, days: Sequence[Day], top: int = 7) -> list[dict]:
-    base = probability(x)
+def explain(fs: F.FeatureSet, patient: Any, top: int = 7) -> list[dict]:
+    """Impact of each non-normal factor in score points: risk now minus risk with that factor at its normal value
+    (one batched prediction, so it is cheap for any model)."""
+    x = fs.vector()
+    idx = [i for i, k in enumerate(KEYS) if k in F.EXPLAIN and x[i] != NORMAL[i]]
+    if not idx:
+        return []
+    X = np.repeat(x.reshape(1, -1), len(idx) + 1, axis=0)
+    for row, i in enumerate(idx, start=1):
+        X[row, i] = NORMAL[i]
+    p = probabilities(X)
     out = []
-    for i, key in enumerate(KEYS):
-        if x[i] == NORMAL[i]:
+    for row, i in enumerate(idx, start=1):
+        impact = round(float(p[0] - p[row]) * 100, 1)
+        if abs(impact) < 0.3:
             continue
-        alt = x.copy()
-        alt[i] = NORMAL[i]
-        impact = round((base - probability(alt)) * 100, 1)
-        if abs(impact) < 0.5:
-            continue
-        out.append({"key": key, "label": LABELS[key], "value": _fmt(key, x[i], profile, days),
-                    "impact": impact, "direction": "up" if impact > 0 else "down"})
+        key = KEYS[i]
+        out.append({"key": key, "label": LABELS[key], "value": _fmt(key, x[i], fs, patient), "impact": impact,
+                    "direction": "up" if impact > 0 else "down"})
     out.sort(key=lambda f: abs(f["impact"]), reverse=True)
     return out[:top]
 
 
-# ---------- safety rules ----------
-
+# ---------------------------------------------------------------------------------------------------------------
+# Safety rules
+# ---------------------------------------------------------------------------------------------------------------
 EMERGENCY = "Seek emergency care now (call the care team / go to the emergency department)."
+SPO2_SUSTAINED_MIN = 15
+FEVER_C = 38.5
 
 
-def red_flags(profile: Profile, days: Sequence[Day]) -> list[dict]:
+def _ts(v) -> datetime:
+    if isinstance(v, str):
+        v = datetime.fromisoformat(v)
+    return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+
+
+def _sustained_low_spo2(readings: list, now: datetime) -> Optional[float]:
+    """Lowest SpO2 of a run of consecutive oximeter readings < 92 % spanning >= 15 minutes in the last 24 h."""
+    rows = sorted(((_ts(F.get(r, "ts")), float(F.get(r, "value"))) for r in readings
+                   if F.get(r, "metric") == "spo2" and now - timedelta(hours=24) <= _ts(F.get(r, "ts")) <= now),
+                  key=lambda t: t[0])
+    run: list = []
+    worst = None
+    for ts, v in rows:
+        if v < 92:
+            run.append((ts, v))
+            if (run[-1][0] - run[0][0]).total_seconds() >= SPO2_SUSTAINED_MIN * 60:
+                low = min(x[1] for x in run)
+                worst = low if worst is None else min(worst, low)
+        else:
+            run = []
+    return worst
+
+
+def red_flags(rec: F.Records, as_of: Optional[date] = None, now: Optional[datetime] = None) -> list[dict]:
     """Rules from sickle cell guidance. They don't depend on the model and always override it."""
-    days = sorted(days, key=lambda d: d.date, reverse=True)
-    if not days or (date.today() - days[0].date).days > 2:
-        return []
-    t = days[0]
+    today = date.today()
+    as_of = as_of or today
+    if now is None:
+        now = datetime.now(timezone.utc) if as_of >= today else datetime.combine(as_of, time(23, 59),
+                                                                                    tzinfo=timezone.utc)
+    p = rec.patient
+    hb_base = float(F.get(p, "hb_baseline", 0) or 0)
+    cis = rec.checkins_before(as_of, 1, within=2)
+    t = cis[0] if cis else None
+    device = [r for r in rec.raw_recent if now - timedelta(hours=24) <= _ts(F.get(r, "ts")) <= now]
     flags = []
-    if t.temperature_c >= 38.5:
-        flags.append({"key": "fever", "label": f"Fever {t.temperature_c:.1f} °C",
-                      "action": "Fever in sickle cell disease is an emergency (infection risk). " + EMERGENCY,
-                      "critical": True})
-    if t.chest_symptoms:
+    temp_c = float(F.get(t, "temperature_c", 0)) if t is not None else 0.0
+    therm = [float(F.get(r, "value")) for r in device if F.get(r, "metric") == "body_temp_c"]
+    fever_action = (f"Fever (temperature ≥ {temp(FEVER_C)}) in sickle cell disease is an emergency (infection "
+                    "risk). " + EMERGENCY)
+    if temp_c >= FEVER_C:
+        flags.append({"key": "fever", "label": f"Fever {temp(temp_c)}", "action": fever_action, "critical": True})
+    elif therm and max(therm) >= FEVER_C:
+        flags.append({"key": "fever", "label": f"Fever {temp(max(therm))} (thermometer, last 24 h)",
+                      "action": fever_action, "critical": True})
+    if t is not None and F.get(t, "chest_symptoms", False):
         flags.append({"key": "chest", "label": "Chest pain or breathing difficulty (possible acute chest syndrome)",
                       "action": EMERGENCY, "critical": True})
-    if t.neuro_symptoms:
+    if t is not None and F.get(t, "neuro_symptoms", False):
         flags.append({"key": "neuro", "label": "Stroke-like symptoms (weakness, speech, face, severe headache)",
                       "action": "Call emergency services immediately (possible stroke).", "critical": True})
-    if t.spo2 is not None and t.spo2 < 92:
-        flags.append({"key": "spo2", "label": f"Oxygen saturation {t.spo2:.0f} %",
+    spo2 = F.get(t, "spo2") if t is not None else None
+    low = _sustained_low_spo2(device, now)
+    if spo2 is not None and float(spo2) < 92:
+        flags.append({"key": "spo2", "label": f"Oxygen saturation {float(spo2):.0f} %",
                       "action": EMERGENCY, "critical": True})
-    hb = _latest(days, "hb", within=2)
-    if hb is not None and profile.hb_baseline - hb >= 2:
-        flags.append({"key": "hb_fall", "label": f"Hb {hb:g} g/dL, ≥2 below baseline {profile.hb_baseline:g}",
+    elif low is not None:
+        flags.append({"key": "spo2", "label": f"Oxygen saturation {low:.0f} % for ≥{SPO2_SUSTAINED_MIN} min "
+                      "(pulse oximeter, last 24 h)", "action": EMERGENCY, "critical": True})
+    hb, _ = rec.lab("hb", as_of, 2)
+    if hb is not None and hb_base and hb_base - hb >= 2:
+        flags.append({"key": "hb_fall", "label": f"Hb {hb:g} g/dL, ≥2 below baseline {hb_base:g}",
                       "action": "Same-day medical review (possible aplastic crisis or splenic sequestration).",
                       "critical": False})
-    if t.pain >= 8:
-        flags.append({"key": "severe_pain", "label": f"Severe pain {t.pain:.0f}/10",
+    pain = float(F.get(t, "pain", 0)) if t is not None else 0.0
+    if pain >= 8:
+        flags.append({"key": "severe_pain", "label": f"Severe pain {pain:.0f}/10",
                       "action": "Follow the personal pain plan and contact the care team today; go to hospital if "
                                 "pain is not controlled at home.", "critical": False})
     return flags
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# Assessment
+# ---------------------------------------------------------------------------------------------------------------
 @dataclass
 class Result:
     probability: float
@@ -327,39 +394,56 @@ class Result:
     model_version: str
 
 
-def assess(profile: Profile, days: Sequence[Day]) -> Result:
-    days = sorted(days, key=lambda d: d.date, reverse=True)
-    x = features(profile, days)
-    p = probability(x)
+def assess_records(rec: F.Records, as_of: Optional[date] = None, now: Optional[datetime] = None) -> Result:
+    """Score one patient from all their records as of a date (default today)."""
+    as_of = as_of or date.today()
+    fs = F.build(rec, as_of)
+    p = probability(fs.vector())
     level = level_for(p)
-    flags = red_flags(profile, days)
+    flags = red_flags(rec, as_of, now)
     if any(f["critical"] for f in flags):
         level = "critical"
     elif flags and level in ("low", "moderate"):
         level = "high"
-    return Result(round(p, 4), round(p * 100, 1), level, explain(x, profile, days),
+    return Result(round(p, 4), round(p * 100, 1), level, explain(fs, rec.patient),
                   [{k: v for k, v in f.items() if k != "critical"} for f in flags], model()["version"])
+
+
+def assess(profile: Profile, days: Sequence[Day], as_of: Optional[date] = None) -> Result:
+    """Check-ins only (no devices / labs / imaging): kept for simple callers and tests."""
+    return assess_records(F.Records.from_rows(profile, checkins=days), as_of)
 
 
 def card() -> dict:
     m = model()
+    imp = m.get("importance", {})
+    groups: dict[str, list[str]] = {}
+    for k in KEYS:
+        groups.setdefault(F.GROUP[k], []).append(LABELS[k])
+    algo = m.get("algorithm", "")
     return {
         "version": m["version"], "trained_at": m["trained_at"],
-        "algorithm": "Logistic regression (scikit-learn) on standardised features; impact = risk now minus risk "
-                     "with that factor at its normal value",
+        "algorithm": f"{algo} with {'isotonic' if getattr(m['model'], 'method', '') == 'isotonic' else 'sigmoid'} "
+                     "calibration on separate patients; impact = risk now minus risk with that factor at its normal "
+                     "value",
         "training_rows": m["training_rows"], "positive_rate": m["positive_rate"], "auc": m["auc"],
-        "brier": m["brier"], "thresholds": THRESHOLDS,
-        "features": [{"key": k, "label": lab, "weight": m["weights"][k], "description": desc}
-                     for k, lab, desc, _, _ in FEATURES],
-        "data_note": "Trained on a synthetic cohort of patient-days generated from published VOC triggers and "
-                     "risk markers (dehydration, cold, infection, fever, hypoxia, stress, sleep, alcohol, exertion, "
-                     "menstruation, hydroxyurea adherence, Hb, WBC, reticulocytes, LDH, HbF, genotype, crisis "
-                     "history). Label: a VOC within the next 7 days.",
-        "limitations": [
-            "Synthetic training data: the numbers show how the system works, not real-world accuracy.",
-            "Must be retrained and validated on real, consented patient outcomes before any clinical use.",
-            "Self-reported check-ins can be missing or inaccurate; missing labs count as normal.",
-            "Red-flag rules always override the model and must be reviewed by the clinical team.",
-            "Not a medical device; supports, never replaces, clinical judgement.",
-        ],
+        "auprc": m["auprc"], "brier": m["brier"], "thresholds": THRESHOLDS,
+        "features": [{"key": k, "label": LABELS[k], "weight": float(imp.get(k, 0.0)), "description": desc,
+                      "group": grp} for k, _, desc, _, grp, _ in F.FEATURES],
+        "calibration": m.get("calibration", []),
+        "operating_points": [{k: o[k] for k in ("level", "threshold", "sensitivity", "specificity", "ppv",
+                                                 "alerts_per_100_weeks")} for o in m.get("operating_points", [])],
+        "comparison": [{k: c[k] for k in ("algorithm", "auroc", "auprc", "brier")} for c in m.get("comparison", [])],
+        "cohort": {k: m.get("cohort", {}).get(k) for k in ("patients", "patient_days", "events")} | {"source": "synthetic"},
+        "feature_groups": [{"group": g, "features": f} for g, f in groups.items()],
+        "lead_time_days": m.get("lead_time_days"),
+        "temporal": {k: m["temporal"][k] for k in ("auroc", "auprc", "brier", "period")} if m.get("temporal") else None,
+        "data_note": "Trained on a synthetic cohort generated by a literature-calibrated simulator of people with sickle "
+                     "cell disease in Ghana (genotype, age, Hb, HbF, WBC, hydroxyurea and adherence, imaging history; "
+                     "daily seasons, fluids, sleep, stress, alcohol, exertion, menses and infections; wearable, pulse "
+                     "oximeter, smart bottle and thermometer data; labs and imaging). Label: a healthcare-utilisation "
+                     "VOC starting within the next 7 days. Metrics are from held-out simulated patients"
+                     + (" (quick start-up model: run `python -m app.train` for the full one)" if m.get("quick") else "")
+                     + "; they are not real-world accuracy.",
+        "limitations": LIMITATIONS,
     }

@@ -1,5 +1,6 @@
 // New check-in and record-crisis forms (shown in modals on the patient page).
 import { useState, type FormEvent, type ReactNode } from "react";
+import { cToF, fToC } from "../lib/temp";
 import { ChevronDown, FlaskConical } from "lucide-react";
 import type { Assessment, CheckIn, CheckInInput, Crisis, Severity, Sex } from "../types";
 import { api } from "../lib/api";
@@ -47,6 +48,14 @@ export function CheckInForm({ patientId, sex, onHydroxyurea, onSaved, onCancel }
     cold_exposure: false, infection_symptoms: false, chest_symptoms: false, neuro_symptoms: false,
     menstruating: false, alcohol: false, strenuous_activity: false, hydroxyurea_taken: onHydroxyurea,
   });
+  // temperature can be typed in °C or °F; it is always sent in °C
+  const [unit, setUnitState] = useState<"C" | "F">(() => { try { return localStorage.getItem("sg_temp_unit") === "F" ? "F" : "C"; } catch { return "C"; } });
+  const setUnit = (u: "C" | "F") => {
+    const cur = Number(n.temperature_c);
+    if (!Number.isNaN(cur) && n.temperature_c !== "" && u !== unit) setN((x) => ({ ...x, temperature_c: (u === "F" ? cToF(cur) : fToC(cur)).toFixed(1) }));
+    setUnitState(u);
+    try { localStorage.setItem("sg_temp_unit", u); } catch { /* ignore */ }
+  };
   const [notes, setNotes] = useState("");
   const [labs, setLabs] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -57,9 +66,10 @@ export function CheckInForm({ patientId, sex, onHydroxyurea, onSaved, onCancel }
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true); setErr(null);
+    const tempC = unit === "F" ? fToC(Number(n.temperature_c)) : Number(n.temperature_c);
     const body: CheckInInput = {
       date, pain, stress,
-      hydration_litres: Number(n.hydration_litres), sleep_hours: Number(n.sleep_hours), temperature_c: Number(n.temperature_c),
+      hydration_litres: Number(n.hydration_litres), sleep_hours: Number(n.sleep_hours), temperature_c: Math.round(tempC * 10) / 10,
       spo2: numOrNull(n.spo2),
       cold_exposure: b.cold_exposure, infection_symptoms: b.infection_symptoms, chest_symptoms: b.chest_symptoms,
       neuro_symptoms: b.neuro_symptoms, menstruating: sex === "F" ? b.menstruating : null, alcohol: b.alcohol,
@@ -76,7 +86,7 @@ export function CheckInForm({ patientId, sex, onHydroxyurea, onSaved, onCancel }
     finally { setBusy(false); }
   }
 
-  const temp = Number(n.temperature_c);
+  const temp = unit === "F" ? fToC(Number(n.temperature_c)) : Number(n.temperature_c);
   return (
     <form onSubmit={submit} className="space-y-5">
       <div className="grid sm:grid-cols-[1fr_2fr] gap-4 items-end">
@@ -90,13 +100,22 @@ export function CheckInForm({ patientId, sex, onHydroxyurea, onSaved, onCancel }
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Field label="Fluids" hint="litres"><Input type="number" step="0.1" min="0" max="10" required value={n.hydration_litres} onChange={(e) => setNum("hydration_litres", e.target.value)} /></Field>
         <Field label="Sleep" hint="hours"><Input type="number" step="0.5" min="0" max="24" required value={n.sleep_hours} onChange={(e) => setNum("sleep_hours", e.target.value)} /></Field>
-        <Field label="Temp" hint="°C">
-          <Input type="number" step="0.1" min="30" max="45" required value={n.temperature_c} onChange={(e) => setNum("temperature_c", e.target.value)}
-            className={cx(temp >= 38.5 && "border-bad/60 text-bad")} />
+        <Field label="Temp" hint={n.temperature_c && !Number.isNaN(temp) ? (unit === "C" ? `= ${cToF(temp).toFixed(1)} °F` : `= ${temp.toFixed(1)} °C`) : (unit === "C" ? "°C" : "°F")}>
+          <div className="flex gap-1">
+            <Input type="number" step="0.1" min={unit === "C" ? 30 : 86} max={unit === "C" ? 45 : 113} required value={n.temperature_c}
+              onChange={(e) => setNum("temperature_c", e.target.value)} aria-label={`Temperature in degrees ${unit === "C" ? "Celsius" : "Fahrenheit"}`}
+              className={cx("min-w-0", temp >= 38.5 && "border-bad/60 text-bad")} />
+            <div className="flex rounded-lg border border-line overflow-hidden shrink-0" role="group" aria-label="Temperature unit">
+              {(["C", "F"] as const).map((u) => (
+                <button key={u} type="button" onClick={() => setUnit(u)} aria-pressed={unit === u}
+                  className={cx("px-2 text-xs transition", unit === u ? "bg-teal/20 text-teal" : "text-faint hover:text-ink")}>°{u}</button>
+              ))}
+            </div>
+          </div>
         </Field>
         <Field label="SpO₂" hint="% optional"><Input type="number" min="50" max="100" value={n.spo2} onChange={(e) => setNum("spo2", e.target.value)} /></Field>
       </div>
-      {temp >= 38.5 && <ErrorNote>Fever of 38.5 °C or more in sickle cell disease is a red flag: seek emergency care now.</ErrorNote>}
+      {temp >= 38.5 && <ErrorNote>Fever of 38.5 °C (101.3 °F) or more in sickle cell disease is a red flag: seek emergency care now.</ErrorNote>}
 
       <div>
         <div className="text-[11px] font-medium text-muted uppercase tracking-wider mb-2">Today</div>

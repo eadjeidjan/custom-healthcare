@@ -10,7 +10,7 @@ In SickleGuard, patients with sickle cell disease complete a short daily check-i
 - **Fluid intake** (litres per day)
 - **Sleep** (hours)
 - **Stress** (0–10)
-- **Temperature** (°C)
+- **Temperature** (°C, shown with °F)
 - **Oxygen saturation** (SpO2, %) if a pulse oximeter is available
 - **Cold exposure** (yes/no)
 - **Infection symptoms** (e.g. sore throat, cough, urinary symptoms)
@@ -30,7 +30,7 @@ In SickleGuard, a machine-learning model combines recent check-ins (trends over 
 
 ## Red flags always override the score
 
-In SickleGuard, certain answers are treated as red flags regardless of the model's score. Fever of 38.5 °C or more (NHLBI; some local protocols use 38.0 °C), chest pain or breathing difficulty, SpO2 below 92 %, and stroke-like symptoms set the level to **critical** with the message to **seek emergency care**. Severe pain (8/10 or more) and a haemoglobin fall of 2 g/dL or more below baseline raise the level to at least **high** and ask for same-day contact or review. The model is never allowed to downgrade a red flag.
+In SickleGuard, certain answers are treated as red flags regardless of the model's score. Fever of 38.5 °C (101.3 °F) or more (NHLBI; some local protocols use 38.0 °C (100.4 °F)), chest pain or breathing difficulty, SpO2 below 92 %, and stroke-like symptoms set the level to **critical** with the message to **seek emergency care**. Severe pain (8/10 or more) and a haemoglobin fall of 2 g/dL or more below baseline raise the level to at least **high** and ask for same-day contact or review. The model is never allowed to downgrade a red flag.
 
 ## Limits of SickleGuard
 

@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import risk
+from app import features, risk
 from app.config import DISCLAIMER
 from app.db import Alert, Assessment, CheckIn, Crisis, Patient
 
@@ -19,7 +19,7 @@ ACTIONS = {
              "Cold and sudden temperature changes trigger vaso-occlusion.", "patient", "today"),
     "infection": ("Contact the care team today about the infection symptoms",
                   "Infection is a leading trigger of crises and of acute chest syndrome.", "care team", "today"),
-    "fever": ("Check temperature again; 38.5 °C or more means emergency care",
+    "fever": ("Check temperature again; 38.5 °C (101.3 °F) or more means emergency care",
               "Fever can mean serious infection (functional asplenia).", "patient", "now"),
     "missed_hu": ("Review hydroxyurea adherence and barriers with the patient",
                   "Hydroxyurea reduces pain crises only when taken regularly.", "care team", "this week"),
@@ -67,9 +67,10 @@ async def latest_assessment(s: AsyncSession, patient_id: str) -> Optional[Assess
                           .order_by(Assessment.created_at.desc()).limit(1))
 
 
-async def score_patient(s: AsyncSession, p: Patient) -> risk.Result:
-    rows = await recent_days(s, p.id)
-    return risk.assess(risk.Profile.of(p), [risk.Day.of(r) for r in rows])
+async def score_patient(s: AsyncSession, p: Patient, as_of: Optional[date] = None) -> risk.Result:
+    """Risk from everything on record: check-ins, device readings, labs, imaging and crisis history."""
+    rec = await features.load(s, p, as_of)
+    return risk.assess_records(rec, as_of)
 
 
 def rule_plan(result: risk.Result) -> list[dict]:

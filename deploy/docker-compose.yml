@@ -1,6 +1,11 @@
-# SickleGuard: one instance (compose project "sg"). Run it with scripts/sg, which passes --env-file deploy/.env.
-# Only the web container publishes a port: 127.0.0.1:${WEB_PORT} (the edge proxy or an SSH tunnel reaches it).
+# SickleGuard: one instance per Compose project. Run it with the sickleguard CLI (cli/), which passes
+#   -p sg-<instance> --env-file deploy/<instance>.env  and IMAGE_TAG (the git SHA the images were built from).
+# Only the web container publishes a port: ${WEB_BIND}:${WEB_PORT} (the edge proxy or an SSH tunnel reaches it).
 # nginx in the web container serves the app and proxies /api/ -> api:8210. The MCP server stays internal.
+# Volumes: db-data (Postgres), qdrant-data (vectors), app-data (/app/data: uploaded files); `sickleguard backup`
+# saves all three. The risk model is baked into the api image (/app/models, trained at build), so every image tag
+# carries its own model and a rollback brings the matching model back.
+# On the Kasada server the CLI adds -f deploy/shared-edge.yml (web joins kasada-edge's network).
 name: ${COMPOSE_PROJECT_NAME:-sg}
 
 x-app-env: &app-env
@@ -8,16 +13,19 @@ x-app-env: &app-env
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   CHAT_MODEL: ${CHAT_MODEL:-gpt-4.1-mini}
   EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-small}
-  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sg}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@db:5432/${POSTGRES_DB:-sickleguard}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sg}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/<instance>.env}@db:5432/${POSTGRES_DB:-sickleguard}
   QDRANT_URL: http://qdrant:6333
   MCP_URL: http://mcp:8211/mcp
   MCP_HOST: 0.0.0.0
-  MCP_TOKEN: ${MCP_TOKEN:?set MCP_TOKEN in deploy/.env}
-  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in deploy/.env}
+  MCP_TOKEN: ${MCP_TOKEN:?set MCP_TOKEN in deploy/<instance>.env}
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in deploy/<instance>.env}
   ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@sickleguard.local}
   ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
   CORS_ORIGINS: ${PUBLIC_URL:-http://localhost:8310}
-  SEED_DEMO: ${SEED_DEMO:-true}
+  SEED_DEMO: ${SEED_DEMO:-false}
+  DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+  SIMULATE_DEVICES: ${SIMULATE_DEVICES:-false}
+  DATA_DIR: /app/data
 
 services:
   db:
@@ -25,7 +33,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-sg}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/<instance>.env}
       POSTGRES_DB: ${POSTGRES_DB:-sickleguard}
     volumes: [db-data:/var/lib/postgresql/data]
     healthcheck:
@@ -49,7 +57,7 @@ services:
     image: sg-api:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment: *app-env
-    volumes: [model-data:/app/models]
+    volumes: [app-data:/app/data]
     depends_on:
       db: { condition: service_healthy }
       qdrant: { condition: service_healthy }
@@ -59,7 +67,7 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "app.mcp_server"]
     environment: *app-env
-    volumes: [model-data:/app/models]
+    volumes: [app-data:/app/data]
     depends_on:
       api: { condition: service_healthy }
     healthcheck:
@@ -79,4 +87,4 @@ services:
 volumes:
   db-data:
   qdrant-data:
-  model-data:
+  app-data:

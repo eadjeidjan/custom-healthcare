@@ -10,7 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app import assistant, llm, rag
 from app.db import Document, Patient, Thread, User, get_session, now, open_session
-from app.security import admin_user, current_user
+from app.security import admin_user, staff_user
 
 router = APIRouter()
 
@@ -22,7 +22,7 @@ class ChatIn(BaseModel):
 
 
 @router.post("/assistant/chat")
-async def chat(body: ChatIn, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def chat(body: ChatIn, user: User = Depends(staff_user), session: AsyncSession = Depends(get_session)):
     thread = await session.get(Thread, body.thread_id) if body.thread_id else None
     if thread is not None and thread.user_id != user.id:
         raise HTTPException(404, "No such conversation.")
@@ -64,14 +64,14 @@ async def chat(body: ChatIn, user: User = Depends(current_user), session: AsyncS
 
 
 @router.get("/assistant/threads")
-async def threads(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def threads(user: User = Depends(staff_user), session: AsyncSession = Depends(get_session)):
     rows = await session.scalars(select(Thread).where(Thread.user_id == user.id)
                                  .order_by(Thread.updated_at.desc()).limit(50))
     return [{"id": t.id, "title": t.title, "patient_id": t.patient_id, "updated_at": t.updated_at} for t in rows]
 
 
 @router.get("/assistant/threads/{tid}")
-async def thread(tid: str, user: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def thread(tid: str, user: User = Depends(staff_user), session: AsyncSession = Depends(get_session)):
     t = await session.get(Thread, tid)
     if t is None or t.user_id != user.id:
         raise HTTPException(404, "No such conversation.")
@@ -79,7 +79,7 @@ async def thread(tid: str, user: User = Depends(current_user), session: AsyncSes
 
 
 @router.get("/assistant/tools")
-async def tool_list(_: User = Depends(current_user)):
+async def tool_list(_: User = Depends(staff_user)):
     found, src = await assistant.tools()
     return [{"name": t.name, "description": (t.description or "").split("\n")[0], "source": src} for t in found]
 
@@ -90,12 +90,12 @@ def doc_out(d: Document) -> dict:
 
 
 @router.get("/knowledge")
-async def documents(_: User = Depends(current_user), session: AsyncSession = Depends(get_session)):
+async def documents(_: User = Depends(staff_user), session: AsyncSession = Depends(get_session)):
     return [doc_out(d) for d in await session.scalars(select(Document).order_by(Document.title))]
 
 
 @router.get("/knowledge/search")
-async def search(q: str, k: int = 5, _: User = Depends(current_user)):
+async def search(q: str, k: int = 5, _: User = Depends(staff_user)):
     if not q.strip():
         return []
     return await rag.search(q, k)

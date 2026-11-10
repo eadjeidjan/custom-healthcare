@@ -13,8 +13,12 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
-RUN uv sync --frozen --no-dev && mkdir -p models && chown -R app:app /app
+# /app/data (uploaded files) is a volume in production: created here owned by the app user, so a new named volume
+# starts with that ownership and the app can write to it.
+RUN uv sync --frozen --no-dev && mkdir -p models data && chown -R app:app /app
 USER app
+# The risk model ships inside the image (models/ is not in git): trained here, so each image tag has its own model.
+RUN python -m app.train --no-report
 EXPOSE 8210 8211
 HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=5 \
     CMD curl -fsS http://127.0.0.1:8210/api/v1/health || exit 1

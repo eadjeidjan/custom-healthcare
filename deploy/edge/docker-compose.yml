@@ -1,13 +1,14 @@
-# Optional HTTPS front proxy (compose project "sg-edge"): ports 80/443, Let's Encrypt certificate for ${DOMAIN},
-# forwards to the web container on the host's 127.0.0.1:${WEB_PORT}. Started by `scripts/sg edge`.
-name: sg-edge
+# Optional HTTPS front proxy (compose project "sickleguard-edge"): ports 80/443, Let's Encrypt certificate for ${DOMAIN},
+# forwards to the web container on the host's 127.0.0.1:${WEB_PORT}. Started by `sickleguard edge up` in "own" mode; on a
+# server whose 80/443 already belong to another proxy use "external" mode and `sickleguard edge snippet` instead.
+name: sickleguard-edge
 services:
   caddy:
     image: caddy:2.11
     restart: unless-stopped
     network_mode: host
     environment:
-      DOMAIN: ${DOMAIN:?set DOMAIN in deploy/.env}
+      DOMAIN: ${DOMAIN:?set DOMAIN in deploy/<instance>.env}
       ACME_EMAIL: ${ACME_EMAIL:-}
       WEB_PORT: ${WEB_PORT:-8310}
     volumes:

@@ -1,0 +1,15 @@
+# Added by the sickleguard CLI when CustoCare's front proxy (kasada-edge) is on this server: the web container joins
+# kasada-edge's docker network under a fixed name, so sickleguard.caddy (in kasada-edge's extra-sites folder) can
+# send the SickleGuard site to it (reverse_proxy sickleguard-<instance>-web:80). HTTPS and the certificates stay
+# with kasada-edge. The loopback port from docker-compose.yml stays for the CLI's health checks and SSH tunnels.
+services:
+  web:
+    networks:
+      default: {}
+      kasada-edge:
+        aliases: ["sickleguard-${SICKLEGUARD_INSTANCE:-live}-web"]
+
+networks:
+  kasada-edge:
+    name: kasada-edge
+    external: true

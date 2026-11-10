@@ -1,0 +1,312 @@
+{
+  "meta": {
+    "title": "SickleGuard daily patient simulator parameters",
+    "version": "0.1.0",
+    "compiled": "2026-11-10",
+    "companion_doc": "docs/research/DATA_SOURCES.md",
+    "confidence_scale": {
+      "high": "value read directly from a primary abstract or official source during this review",
+      "medium": "from a secondary summary of a primary source, or a well-established clinical convention; verify before publication",
+      "low": "expert placeholder, derived value, or citation from memory not verified online; tune or replace once real data arrive"
+    },
+    "conventions": {
+      "time_step": "1 day",
+      "rates": "per patient-year unless stated",
+      "effect_sizes": "multiplicative on the daily VOC hazard (rate ratio / hazard ratio); apply OR as RR when baseline daily risk < 5%",
+      "units": "Hb g/dL; WBC 10^9/L; retic %; LDH U/L; bilirubin mg/dL; CRP mg/L; ferritin ng/mL; HR bpm; RMSSD ms; SpO2 %; skin temp deg C deviation from personal baseline; sleep hours"
+    },
+    "warning": "Synthetic data from these parameters are for pipeline development only. Never report model performance on simulated data as clinical accuracy."
+  },
+
+  "outcome_definition": {
+    "note": "Choose ONE label definition; event rates differ ~5-10x between them.",
+    "utilisation_voc": {
+      "definition": "Acute pain requiring ED / day-hospital / admission and parenteral analgesia (CSSCD definition: pain lasting >=2 h requiring physician contact)",
+      "source": "Platt OS et al. NEJM 1991;325:11-16 (PMID 1710777)",
+      "confidence": "high"
+    },
+    "patient_reported_crisis_day": {
+      "fraction_of_days_crisis_no_utilisation": {"value": 0.127, "source": "Smith WR et al. Ann Intern Med 2008;148:94-101 (PiSCES), PMID 18195334", "confidence": "high"},
+      "fraction_of_days_utilisation": {"value": 0.035, "source": "Smith 2008 PiSCES, PMID 18195334", "confidence": "high"},
+      "fraction_of_days_any_pain": {"value": 0.545, "source": "Smith 2008 PiSCES, PMID 18195334", "confidence": "high"},
+      "fraction_patients_pain_gt95pct_days": {"value": 0.293, "source": "Smith 2008 PiSCES, PMID 18195334", "confidence": "high"},
+      "note": "PiSCES cohort = 232 US adults >=16y followed up to 6 months; a skewed, chronic-pain-heavy population"
+    },
+    "prediction_target": "P(utilisation VOC onset in days t+1..t+7 | data up to day t)"
+  },
+
+  "genotypes": {
+    "distribution": {
+      "ghana_scd_patients_kumasi_registry": {
+        "HbSS": 0.672, "HbSC": 0.325, "HbSbeta_plus": 0.003, "HbSbeta0": 0.0,
+        "n": 3148,
+        "source": "Paintsil V et al. Front Genet 2022;13:802355 (SPARCO Kumasi registry) https://pmc.ncbi.nlm.nih.gov/articles/PMC8908904/",
+        "confidence": "high",
+        "note": "Clinic registry; 50.3% from newborn screening cohort. Sbeta0 not reported separately (likely counted within SS)."
+      },
+      "ghana_newborn_north_tamale": {
+        "HbAA": 0.7487, "HbAC": 0.1395, "HbAS": 0.0886, "HbCC": 0.0102, "HbSC": 0.0109, "HbSS": 0.0027,
+        "n": 4123,
+        "source": "ASH 2024 abstract, Tamale Teaching Hospital newborn screening https://ash.confex.com/ash/2024/webprogram/Paper205127.html",
+        "confidence": "medium",
+        "note": "Conference abstract. HbCC is not sickle cell disease; exclude from SCD cohort."
+      },
+      "ghana_newborn_kumasi_trait": {
+        "HbAS": 0.133, "HbAC": 0.085,
+        "source": "Kumasi newborn screening programme report (2005), via search summary; see https://ugspace.ug.edu.gh/items/8c9e245c-1010-47f3-8f4a-9bc256069444",
+        "confidence": "medium"
+      },
+      "us_scd_patients": {
+        "HbSS": 0.60, "HbSC": 0.30, "HbSbeta_plus": 0.07, "HbSbeta0": 0.03,
+        "source": "Approximation from CSSCD cohort composition and US newborn screening (Hassell KL, Am J Prev Med 2010;38:S512, PMID 20331952 gives totals only)",
+        "confidence": "low"
+      }
+    },
+
+    "per_genotype": {
+      "HbSS": {
+        "baseline_hb_g_dl": {"mean": 8.0, "sd": 1.2, "source": "US SCA cohort mean 8.9 +/- 1.3 (many on hydroxyurea): Jordan LC et al. Neurology 2025, PMC12614261; untreated African HbSS typically ~7.5-8.5 (not verified for Ghana)", "confidence": "medium"},
+        "hbf_pct": {"mean": 6.0, "sd": 4.0, "distribution": "lognormal, truncate 0.5-30", "source": "Typical untreated HbSS range; Platt 1991 (low HbF -> more pain). Ghana-specific value not located", "confidence": "low"},
+        "hbf_pct_on_hydroxyurea": {"mean": 15.0, "sd": 7.0, "source": "Typical HU response; MSH reported HbF rise (exact values not verified) PMID 7715639", "confidence": "low"},
+        "annual_voc_rate": {"value": 0.8, "source": "Platt 1991 NEJM, PMID 1710777 (utilisation-defined, all ages)", "confidence": "high"},
+        "fraction_zero_voc": {"value": 0.39, "source": "Platt 1991, PMID 1710777", "confidence": "high"},
+        "fraction_gt6_voc_per_year": {"value": 0.01, "source": "Platt 1991, PMID 1710777", "confidence": "high"},
+        "acs_rate_per_100py": {"overall": 12.8, "age_2_4": 25.3, "adult": 8.8, "source": "Castro O et al. Blood 1994;84:643-9 (via abstract summary) https://dh.howard.edu/sicklecell_fac/257", "confidence": "medium"},
+        "avn_incidence_per_100py": {"value": 2.4, "with_alpha_thal": 4.5, "source": "Milner PF et al. NEJM 1991;325:1476 (via summary) https://pesquisa.bvsalud.org/portal/resource/e/mdl-1944426", "confidence": "medium"},
+        "median_survival_years": {"male": 42, "female": 48, "source": "Platt 1994 NEJM, PMID 7993409 (US 1978-1988 era)", "confidence": "high"}
+      },
+      "HbSbeta0": {
+        "baseline_hb_g_dl": {"mean": 8.2, "sd": 1.3, "source": "Clinically similar to HbSS (convention)", "confidence": "low"},
+        "hbf_pct": {"mean": 7.0, "sd": 4.0, "source": "Convention", "confidence": "low"},
+        "annual_voc_rate": {"value": 1.0, "source": "Platt 1991, PMID 1710777", "confidence": "high"},
+        "acs_rate_per_100py": {"overall": 9.4, "source": "Castro 1994 (summary)", "confidence": "medium"},
+        "avn_incidence_per_100py": {"value": 3.6, "source": "Milner 1991 (summary)", "confidence": "medium"}
+      },
+      "HbSC": {
+        "baseline_hb_g_dl": {"mean": 11.0, "sd": 1.2, "source": "PIVOT Ghana HbSC trial baseline (n=214): Segbefia CI et al. BJH 2024, PMID 39406687", "confidence": "high"},
+        "hbf_pct": {"mean": 1.8, "sd": 1.5, "source": "PIVOT Ghana baseline, PMID 39406687", "confidence": "high"},
+        "annual_voc_rate": {"value": 0.4, "source": "Platt 1991, PMID 1710777", "confidence": "high"},
+        "ever_voc_fraction_ghana": {"value": 0.86, "source": "PIVOT Ghana baseline (prior vaso-occlusive events 86%, hospitalisation 93%), PMID 39406687", "confidence": "high"},
+        "acs_rate_per_100py": {"overall": 5.2, "source": "Castro 1994 (summary)", "confidence": "medium"},
+        "avn_incidence_per_100py": {"value": 1.9, "source": "Milner 1991 (summary)", "confidence": "medium"},
+        "median_survival_years": {"male": 60, "female": 68, "source": "Platt 1994, PMID 7993409", "confidence": "high"}
+      },
+      "HbSbeta_plus": {
+        "baseline_hb_g_dl": {"mean": 11.0, "sd": 1.5, "source": "Convention", "confidence": "low"},
+        "hbf_pct": {"mean": 3.0, "sd": 2.0, "source": "Convention", "confidence": "low"},
+        "annual_voc_rate": {"value": 0.4, "source": "Platt 1991, PMID 1710777", "confidence": "high"},
+        "acs_rate_per_100py": {"overall": 3.9, "source": "Castro 1994 (summary)", "confidence": "medium"},
+        "avn_incidence_per_100py": {"value": 3.3, "source": "Milner 1991 (summary)", "confidence": "medium"}
+      }
+    },
+
+    "between_patient_heterogeneity": {
+      "model": "Per-patient VOC rate = genotype_rate * age_multiplier * covariate_RRs * frailty; frailty ~ Gamma(shape=k, mean=1)",
+      "gamma_shape_k": {"value": 0.6, "range": [0.4, 1.0], "source": "Derived to reproduce Platt 1991 skew: 39% of HbSS with no episodes; 5.2% of patients (3-10 episodes/yr) account for 32.9% of all episodes (PMID 1710777). Calibrate k by simulation.", "confidence": "low"}
+    },
+
+    "age_multiplier_voc_HbSS": {
+      "bands": {"0-1": 0.3, "2-9": 0.6, "10-19": 1.0, "20-29": 1.5, "30-39": 1.2, "40+": 0.9},
+      "source": "Shape follows Platt 1991 (pain rate peaks in 3rd decade); band values not verified from full text",
+      "confidence": "low"
+    },
+
+    "hospitalisation_and_los": {
+      "fraction_of_crisis_days_with_utilisation": {"value": 0.22, "source": "Derived from PiSCES: 3.5% utilisation days / (12.7% + 3.5%) crisis days, PMID 18195334", "confidence": "medium"},
+      "fraction_utilisation_vocs_admitted_vs_ed_discharged": {"value": 0.6, "source": "Placeholder; US ED VOC admission rates commonly ~50-70%", "confidence": "low"},
+      "los_days_ghana_all_scd_admissions": {"median": 3, "iqr": [2, 4], "n_admissions": 22680, "source": "DHIMS-II 2012-2017 analysis, BMJ Open 2021;11:e048407 https://bmjopen.bmj.com/content/11/10/e048407", "confidence": "medium"},
+      "los_days_ghana_kumasi_paediatric": {"median": 6, "iqr": [4, 10], "source": "Oppong-Mensah YG et al. Health Sci Rep 2023 (Kumasi SPARCo paediatric hospitalisations), PMID 37670846 https://pmc.ncbi.nlm.nih.gov/articles/PMC10475768", "confidence": "medium"},
+      "los_days_us_mean": {"value": 5, "source": "US mean SCD admission LOS cited in Ghana BMJ Open 2021 paper", "confidence": "medium"},
+      "los_distribution": "lognormal, fit to median and IQR above",
+      "recurrence_within_30d_after_voc": {"value": 0.5, "source": "Ballas SK & Smith ED, Blood 1992;79:2154 (~50% of painful episodes followed by recurrence within 1 month), PMID 1562742", "confidence": "high"},
+      "readmission_30d_age_18_30_us": {"value": 0.334, "source": "Brousseau DC et al. JAMA 2010;303:1288 (citation from memory)", "confidence": "low"},
+      "voc_duration_days": {"mean": 5, "sd": 2.5, "min": 2, "source": "Placeholder consistent with LOS data above", "confidence": "low"}
+    }
+  },
+
+  "effect_sizes_voc": {
+    "hydroxyurea": {
+      "rate_ratio": {"value": 0.56, "source": "MSH: median 2.5 vs 4.5 crises/yr (HU vs placebo), Charache S et al. NEJM 1995;332:1317, PMID 7715639", "confidence": "high"},
+      "acs_patients_ratio": {"value": 0.49, "source": "MSH: ACS in 25 vs 51 patients, PMID 7715639", "confidence": "high"},
+      "transfusion_patients_ratio": {"value": 0.66, "source": "MSH: 48 vs 73 transfused, PMID 7715639", "confidence": "high"},
+      "time_to_first_crisis_months": {"hu": 3.0, "placebo": 1.5, "source": "PMID 7715639", "confidence": "high"},
+      "onset_lag_days": {"value": 90, "source": "MSH: benefits not manifest for several months, PMID 7715639", "confidence": "medium"},
+      "adherence_fraction_ghana": {"value": 0.6, "source": "Placeholder; no Ghana adherence data located", "confidence": "low"}
+    },
+    "hbf_per_1pct_increase": {"rate_ratio": 0.95, "source": "Direction: Platt 1991 (low HbF -> high pain rate; 'small increments may ameliorate'), PMID 1710777; magnitude not verified", "confidence": "low"},
+    "baseline_wbc_per_1e9_increase": {"rate_ratio": 1.04, "source": "Direction: leukocytosis RR 1.80 for adverse outcome (Miller 2000, PMID 10631276); WBC >15 mortality risk (Platt 1994, PMID 7993409); VOC-specific magnitude not verified", "confidence": "low"},
+    "baseline_hb_per_1g_dl_increase_HbSS": {"rate_ratio": 1.15, "source": "Direction: high haematocrit -> higher pain rate (Platt 1991, PMID 1710777); higher Hb -> more ACS (Castro 1994); magnitude not verified", "confidence": "low"},
+    "prior_year_voc_count": {"rate_ratio_per_event": 1.25, "cap_events": 6, "source": "Placeholder; prior utilisation is the strongest predictor in most SCD models. Consider implementing via frailty instead to avoid double counting", "confidence": "low"},
+    "recent_voc_within_30d": {"rate_ratio": 3.0, "source": "Derived from Ballas 1992 ~50% 1-month recurrence (PMID 1562742) versus a baseline monthly risk of ~5-10%", "confidence": "medium"},
+    "age_bands": {"see": "genotypes.age_multiplier_voc_HbSS"},
+    "weather": {
+      "wind_speed_per_1sd": {"rate_ratio": 1.06, "ci95": [1.00, 1.12], "source": "London & Paris admissions, Haematologica 2016/17 https://haematologica.org/article/view/8032", "confidence": "medium"},
+      "high_vs_low_wind_category": {"odds_ratio": 1.13, "ci95": [1.03, 1.24], "source": "Nolan VG et al. Br J Haematol 2008 case-crossover, PMID 18729854 https://pmc.ncbi.nlm.nih.gov/articles/PMC4347894", "confidence": "medium"},
+      "low_humidity": {"rate_ratio": 1.1, "source": "Direction: Jones S et al. Br J Haematol 2005;131:530 (London) https://eprints.kingston.ac.uk/7102/ ; magnitude placeholder", "confidence": "low"},
+      "cold_low_max_temp_per_5C_drop": {"rate_ratio": 1.1, "source": "Direction: Northern Italy study (low max temp, low humidity, low pressure) and US national sample; London 2005 found no temperature effect. Magnitude placeholder. Ghana: harmattan (Dec-Feb, dry dusty wind, cool nights) is the relevant season", "confidence": "low"},
+      "rainfall_per_1sd": {"rate_ratio": 1.05, "source": "Haematologica London/Paris study reported a similar RR for rainfall (summary)", "confidence": "low"}
+    },
+    "dehydration_low_fluid_intake": {"rate_ratio": 1.5, "window_days": 2, "source": "Widely cited trigger (NHLBI 2014 Expert Panel); no quantified RR located", "confidence": "low"},
+    "infection_fever": {"rate_ratio": 2.5, "window_days": 5, "source": "Recognised precipitant (fever, malaria in Ghana); no quantified RR located", "confidence": "low"},
+    "malaria_episode_ghana": {"rate_ratio": 2.5, "annual_incidence_in_scd": 0.3, "source": "Placeholder; PIVOT Ghana: 79% had prior malaria (PMID 39406687)", "confidence": "low"},
+    "menstruation_perimenstrual": {
+      "fraction_women_susceptible": {"value": 0.282, "source": "Vanderbilt survey of 103 women with SCD (via news report) https://sicklecellanemianews.com/news/vaso-occlusive-pain-linked-menstruation/", "confidence": "medium"},
+      "window": "days -7..+5 around menses onset; 55% of reported episodes fell in the 7 days before menses, 38% during",
+      "rate_ratio_in_window_for_susceptible": {"value": 2.0, "source": "Placeholder", "confidence": "low"}
+    },
+    "psychological_stress_high_day": {"rate_ratio": 1.3, "window_days": 2, "source": "Direction: daily stress and mood predict same/next-day pain (Gil KM et al. Health Psychol 2004, citation from memory)", "confidence": "low"},
+    "short_sleep_lt6h": {"rate_ratio": 1.3, "window_days": 1, "source": "Direction: poor sleep -> next-day pain (Valrie CR et al. daily diaries, citation from memory); nocturnal hypoxaemia -> more crises (Hargrave 2003, PMID 12393400)", "confidence": "low"},
+    "alcohol_heavy_day": {"rate_ratio": 1.3, "window_days": 2, "source": "Patient-reported trigger; no quantified RR located", "confidence": "low"},
+    "altitude_or_flight": {"rate_ratio": 1.8, "window_days": 3, "condition": "flight >4 h or ascent >1500 m", "source": "Case series / guidance only; no quantified RR located", "confidence": "low"},
+    "strenuous_exertion": {"rate_ratio": 1.3, "window_days": 1, "source": "Recognised trigger, especially with heat and dehydration; no quantified RR located", "confidence": "low"},
+    "low_nocturnal_spo2_trait": {"rate_ratio_per_1pct_lower_mean_nocturnal_spo2": 1.1, "source": "Direction and significance: Hargrave 2003 Blood (p<0.0001), PMID 12393400; magnitude placeholder", "confidence": "low"}
+  },
+
+  "pre_crisis_trajectories": {
+    "note": "Offsets relative to VOC onset day 0 (first utilisation/crisis day). Apply as additive (abs) or multiplicative (pct) deviations from the patient's personal baseline, plus noise. Evidence for >1-day consumer-wearable prodrome is weak; make lead strength a tunable 'signal_strength' parameter (0 = no prodrome) for robustness tests.",
+    "pain_0_10": {"day_-3": 0.3, "day_-2": 0.8, "day_-1": 1.8, "day_0": 6.5, "during_peak": 8.0, "resolution_days": 5, "type": "abs", "source": "Ballas 1992 phase 1 (pain escalation; RBC changes 1-3 d before pain), PMID 1562742; magnitudes placeholder", "confidence": "low"},
+    "resting_hr_bpm": {"day_-2": 1.0, "day_-1": 3.0, "day_0": 8.0, "during": 12.0, "type": "abs", "source": "Direction: Duke Apple Watch (resting HR 2nd most important pain feature), PMC10634543; magnitudes placeholder", "confidence": "low"},
+    "hrv_rmssd": {"day_-2": -0.05, "day_-1": -0.15, "day_0": -0.25, "during": -0.30, "type": "pct", "source": "Direction: USC Biostrap pilot (lower HF power preceded next-day higher pain, p=0.0002) https://ash.confex.com/ash/2023/webprogram/Paper187353.html ; VOC associated with HRV decline (Mizrahi 2026, PMID 42644133); magnitudes placeholder", "confidence": "low"},
+    "spo2_pct": {"day_-1": 0.0, "day_0": -0.5, "during_uncomplicated": -1.0, "during_acs": -4.0, "type": "abs", "source": "ACS defined with hypoxaemia; uncomplicated VOC small change (placeholder)", "confidence": "low"},
+    "skin_temp_deviation_c": {"infection_triggered": {"day_-2": 0.3, "day_-1": 0.7, "day_0": 1.0}, "non_infection": {"day_0": 0.2, "during": 0.3}, "type": "abs", "fraction_infection_triggered": 0.25, "source": "Placeholder", "confidence": "low"},
+    "steps": {"day_-2": -0.10, "day_-1": -0.30, "day_0": -0.70, "during_home": -0.70, "during_admitted": -0.90, "type": "pct", "source": "Direction: step count top feature in Duke model, PMC10634543; magnitudes placeholder", "confidence": "low"},
+    "sleep_hours": {"night_-2": -0.2, "night_-1": -0.6, "during": -1.2, "type": "abs", "source": "Placeholder; bidirectional pain-sleep relation", "confidence": "low"},
+    "fluid_intake_l": {"day_-2": -0.2, "day_-1": -0.4, "type": "abs", "note": "only when dehydration is the trigger", "source": "Placeholder", "confidence": "low"},
+    "hb_g_dl": {"day_-1": -0.2, "during": -0.7, "acs": -1.0, "type": "abs", "source": "Direction: Hb decreases in phase 1 (Ballas 1992, PMID 1562742); ACS Hb fall ~0.7-0.8 g/dL (Vichinsky NEJM 2000, citation from memory)", "confidence": "low"},
+    "reticulocytes_pct": {"during_early": 0.15, "recovery": 0.25, "type": "pct", "source": "Direction: reticulocytes rise during initial phase (Ballas 1992, PMID 1562742); magnitude placeholder", "confidence": "low"},
+    "ldh": {"during": 0.30, "type": "pct", "source": "Placeholder (LDH rises during VOC)", "confidence": "low"},
+    "wbc": {"during": 3.0, "infection_triggered": 6.0, "type": "abs (10^9/L)", "source": "Placeholder", "confidence": "low"},
+    "crp_mg_l": {"during": 30, "acs_or_infection": 80, "type": "abs", "source": "Placeholder", "confidence": "low"}
+  },
+
+  "wearable_baselines_scd": {
+    "note": "Personal baseline drawn per patient from population distribution; daily value = baseline + circadian/weekly effects + AR(1) noise (phi ~0.5) + event deviations. Device missingness ~15-30% days (placeholder).",
+    "resting_hr_bpm": {"adult_mean": 78, "adult_sd": 9, "child_mean": 90, "child_sd": 10, "within_person_daily_sd": 3.5, "source": "Placeholder: higher than non-anaemic peers due to compensatory high cardiac output; no SCD wearable norms found", "confidence": "low"},
+    "hrv_rmssd_ms": {"adult_mean": 30, "adult_sd": 14, "distribution": "lognormal", "within_person_cv": 0.25, "source": "Direction: SCD has lower HRV than controls (Mizrahi 2026 PMID 42644133; Lopez-Galan 2023 PMC10303389); magnitudes placeholder", "confidence": "low"},
+    "spo2_pct_awake": {"median": 96, "iqr": [94, 97.4], "within_person_daily_sd": 0.8, "lower_in_adults": true, "source": "Jordan LC et al. Neurology 2025 (SCA n=126; controls median 98) PMC12614261", "confidence": "high"},
+    "spo2_pct_nocturnal_mean": {"mean": 94.5, "sd": 2.5, "source": "Placeholder; nocturnal desaturation common in SCD children (Hargrave 2003, PMID 12393400)", "confidence": "low"},
+    "pulse_oximeter_bias_dark_skin": {"value": 1.0, "unit": "% over-read", "source": "Known occult hypoxaemia bias in darker skin; magnitude placeholder", "confidence": "low"},
+    "skin_temp_nightly_deviation_c": {"mean": 0.0, "within_person_daily_sd": 0.3, "source": "Placeholder (wearable convention: deviation from personal baseline)", "confidence": "low"},
+    "steps_per_day": {"adult_mean": 5500, "adult_sd": 2500, "child_mean": 8000, "child_sd": 3000, "within_person_cv": 0.35, "distribution": "lognormal", "source": "Placeholder", "confidence": "low"},
+    "sleep_hours": {"mean": 6.8, "sd": 1.0, "within_person_daily_sd": 0.9, "source": "Placeholder", "confidence": "low"},
+    "fluid_intake_l_per_day": {"mean": 2.0, "sd": 0.6, "recommended": 3.0, "source": "Placeholder; higher intake routinely advised in SCD", "confidence": "low"},
+    "daily_pain_0_10_steady_state": {"fraction_zero": 0.45, "mean_when_present": 3.5, "source": "PiSCES: pain on 54.5% of days (PMID 18195334); intensity placeholder", "confidence": "medium"}
+  },
+
+  "labs": {
+    "note": "reference = healthy adult range; scd_ss / scd_sc = typical steady-state values. Steady state = no acute event for >=2-4 weeks.",
+    "hb_g_dl": {"reference": {"female": [12.0, 16.0], "male": [13.5, 17.5]}, "scd_ss": {"mean": 8.0, "sd": 1.2}, "scd_sc": {"mean": 11.0, "sd": 1.2}, "source": "Standard reference; SS: Jordan 2025 PMC12614261; SC: PIVOT PMID 39406687", "confidence": "medium"},
+    "hbf_pct": {"reference": [0, 1], "scd_ss": {"mean": 6.0, "sd": 4.0}, "scd_sc": {"mean": 1.8, "sd": 1.5}, "source": "Standard; SC from PIVOT PMID 39406687", "confidence": "medium"},
+    "wbc_1e9_l": {"reference": [4.0, 11.0], "scd_ss": {"mean": 11.5, "sd": 3.0}, "scd_sc": {"mean": 8.0, "sd": 2.5}, "source": "Standard; SS leukocytosis well established (Platt 1994 threshold 15); Korle Bu: WBC higher in SS/SC than AA (Antwi-Boasiako 2018 doi:10.2147/JBM.S169872); exact means not verified", "confidence": "medium"},
+    "reticulocytes_pct": {"reference": [0.5, 2.5], "scd_ss": {"mean": 9.0, "sd": 4.0}, "scd_sc": {"mean": 3.5, "sd": 1.5}, "source": "Typical clinical values; not verified from a single source", "confidence": "low"},
+    "ldh_u_l": {"reference": [140, 280], "scd_ss": {"mean": 450, "sd": 150}, "scd_sc": {"mean": 280, "sd": 80}, "source": "Typical clinical values; lab-method dependent", "confidence": "low"},
+    "total_bilirubin_mg_dl": {"reference": [0.2, 1.2], "scd_ss": {"mean": 3.0, "sd": 1.5}, "scd_sc": {"mean": 1.5, "sd": 0.7}, "source": "Typical; UGT1A1 (Gilbert) modifies", "confidence": "low"},
+    "crp_mg_l": {"reference": [0, 5], "scd_ss": {"median": 6, "iqr": [3, 12]}, "source": "Typical", "confidence": "low"},
+    "ferritin_ng_ml": {"reference": [20, 300], "scd_ss_non_transfused": {"median": 250, "iqr": [100, 500]}, "source": "Typical; rises with transfusion burden and inflammation", "confidence": "low"},
+    "platelets_1e9_l": {"reference": [150, 400], "scd_ss": {"mean": 400, "sd": 120}, "source": "Typical; Korle Bu: platelets higher in SS/SC than AA (Antwi-Boasiako 2018)", "confidence": "low"},
+    "lab_noise_cv": {"value": 0.05, "source": "Analytical + biological variation placeholder", "confidence": "low"},
+    "testing_cadence": {
+      "steady_state_cbc_retic_days": {"value": 120, "range": [90, 180], "source": "Routine clinic review every 3-6 months (NHLBI 2014 Expert Panel convention); Ghana clinic practice not verified", "confidence": "low"},
+      "on_hydroxyurea_titration_cbc_days": {"value": 28, "source": "NHLBI 2014 Expert Panel: CBC ~every 4 weeks during dose escalation, then every 2-3 months", "confidence": "medium"},
+      "on_hydroxyurea_maintenance_cbc_days": {"value": 75, "source": "NHLBI 2014 Expert Panel", "confidence": "medium"},
+      "hbf_on_hu_days": {"value": 90, "source": "Convention", "confidence": "low"},
+      "during_admission": "CBC, retic, LDH, CRP daily to every 2 days (placeholder, low)",
+      "tcd_screening": {"age_range": [2, 16], "interval_days": 365, "genotypes": ["HbSS", "HbSbeta0"], "source": "NHLBI 2014 Expert Panel / STOP", "confidence": "high"}
+    }
+  },
+
+  "imaging": {
+    "tcd": {
+      "thresholds_cm_s_tamm": {"normal_lt": 170, "conditional": [170, 199], "abnormal_gte": 200, "source": "STOP: Adams RJ et al. NEJM 1998;339:5, PMID 9647873", "confidence": "high"},
+      "transfusion_stroke_risk_reduction": {"value": 0.92, "source": "PMID 9647873", "confidence": "high"},
+      "prevalence_elevated_children_ghana_kumasi": {"value": 0.132, "n": 136, "source": "APHA 2001 abstract, KATH Kumasi https://apha.confex.com/apha/129am/techprogram/paper_29734.htm", "confidence": "medium"},
+      "prevalence_conditional_children_nigeria": {"value": [0.10, 0.187], "source": "Nigerian multicentre study (via search summary)", "confidence": "medium"},
+      "prevalence_abnormal_HbSS_children": {"value": 0.08, "source": "Placeholder (~8-10% in pre-STOP US screening; Nigeria lower)", "confidence": "low"},
+      "prevalence_abnormal_HbSC": {"value": 0.005, "source": "Placeholder; abnormal TCD rare in HbSC", "confidence": "low"}
+    },
+    "silent_cerebral_infarct": {
+      "cumulative_HbSS": {"by_age_6": 0.25, "by_age_18": 0.39, "by_age_30": 0.53, "source": "Frontiers in Neurology 2022 review citing DeBaun/Bernaudin cohorts https://www.frontiersin.org/articles/10.3389/fneur.2022.867329", "confidence": "medium"},
+      "adult_prevalence_median_age_24": {"value": 0.453, "source": "Jordan LC et al. JAHA 2024, PMC11255756", "confidence": "high"},
+      "new_infarct_incidence_per_100py": {"with_sci": 11.95, "without_sci": 3.74, "source": "PMC11255756", "confidence": "high"},
+      "HbSC_multiplier": {"value": 0.5, "source": "Placeholder", "confidence": "low"}
+    },
+    "prior_acs": {
+      "ever_acs_fraction_csscd_followup": {"value": 0.29, "source": "Derived: 1,085 of 3,751 patients had >=1 ACS during CSSCD follow-up (Castro 1994 summary)", "confidence": "medium"},
+      "suggested_ever_acs_by_adulthood_HbSS": {"value": 0.5, "source": "Placeholder (cumulative over childhood)", "confidence": "low"},
+      "suggested_ever_acs_by_adulthood_HbSC": {"value": 0.25, "source": "Placeholder", "confidence": "low"}
+    },
+    "avn": {
+      "prevalence_at_entry": {"value": 0.098, "n": 2590, "source": "Milner 1991 NEJM (summary)", "confidence": "medium"},
+      "incidence_per_100py_by_genotype": {"HbSS": 2.4, "HbSS_alpha_thal": 4.5, "HbSbeta0": 3.6, "HbSbeta_plus": 3.3, "HbSC": 1.9, "source": "Milner 1991 (summary)", "confidence": "medium"},
+      "risk_factor": "frequent painful crises -> higher AVN risk (Milner 1991)"
+    },
+    "splenomegaly_palpable": {"HbSC_ghana_children_adults": {"value": 0.033, "source": "PIVOT: 7 of 214 palpable spleen, PMID 39406687", "confidence": "high"}, "HbSS_young_children": {"value": 0.3, "source": "Placeholder; African HbSS children often retain splenomegaly", "confidence": "low"}}
+  },
+
+  "ghana_policy": {
+    "population_2021": {"value": 30832019, "source": "Ghana Statistical Service 2021 PHC (final, sum of regions) via https://www.citypopulation.de/en/ghana/admin/ ; provisional 30,792,608", "confidence": "high"},
+    "live_births_per_year": {"value": 896000, "source": "Ghanaian Times 2025 report https://ghanaiantimes.com.gh/newborns-to-be-screened-for-sickle-cell-disease-prof-osei-akoto", "confidence": "medium"},
+    "scd_births_per_year": {
+      "official_estimate": {"value": [15000, 18000], "point": 16500, "source": "GNA June 2026 https://gna.org.gh/2026/06/ghana-struggles-to-achieve-nationwide-newborn-screening-for-sickle-cell/ ; Ghanaian Times 2025 (15,000-20,000, ~2% of births)", "confidence": "medium"},
+      "model_estimate": {"value": 5474, "source": "IthaMaps (statistical model median) https://ithanet.eu/db/ithamaps?country=GH", "confidence": "medium"},
+      "hardy_weinberg_check": {"value": 9000, "source": "Derived from Kumasi trait frequencies (AS 13.3%, AC 8.5%): SS+SC ~1.0% of 896,000 births", "confidence": "low"},
+      "note": "Sources conflict ~3x. Dashboard should show a range and name the source."
+    },
+    "scd_birth_prevalence": {"value": 0.02, "source": "Widely quoted 2% of births (Ghanaian Times 2025); Kumasi trait-derived HW estimate ~1.0%", "confidence": "low"},
+    "newborn_screening_coverage": {"value": 0.055, "source": "Ghanaian Times (date unclear) https://ghanaiantimes.com.gh/newborns-to-be-screened-for-sickle-cell-disease-prof-osei-akoto", "confidence": "low"},
+    "nhis_active_coverage": {"2024": 0.563, "2024_active_members": 18600000, "2025_active_members": 22000000, "source": "NHIA reports https://nhis.gov.gh/News/nhis-registers-over-18-million-active-members--5982 ; 56.3% via secondary report", "confidence": "medium"},
+    "hydroxyurea": {
+      "availability": "Novartis public-private partnership; available from Nov 2019; Ghana FDA approved 2018",
+      "nhis_listing": "Announced June 2021 for severe SCD; implementation status 2023-2026 unverified",
+      "coverage_fraction_HbSS_on_hu": {"value": 0.15, "source": "Placeholder; no national uptake data found", "confidence": "low"},
+      "source": "https://moh.gov.gh/hydroxyurea-sickle-cell-medicine-now-available-in-ghana/ ; https://www.myjoyonline.com/sickle-cell-foundation-of-ghana-expresses-appreciation-to-government-for-decision-on-hydroxyurea-for-treatment-of-sickle-cell-disease/",
+      "confidence": "medium"
+    },
+    "cost": {
+      "annual_total_cost_usd_ge3_voc_per_year": {"median": 166.8, "iqr": [70.3, 223.5], "source": "Marfo et al. BMC Health Serv Res 2023 (private insurer claims 2015-2021; 1 GHS = 0.11328 USD) https://bmchealthservres.biomedcentral.com/articles/10.1186/s12913-023-09984-6", "confidence": "medium"},
+      "annual_total_cost_usd_1_3_voc_per_year": {"median": 21.8, "iqr": [11.8, 49.6], "source": "Same", "confidence": "medium"},
+      "per_voc_admission_cost_ghs": {"value": null, "source": "Not found; facility-level costing needed (KATH/KBTH)", "confidence": "low"},
+      "note": "Insurer-paid tariffs understate true cost (out-of-pocket, lost work, carers)."
+    },
+    "regions": {
+      "note": "population = 2021 PHC. zone determines HbS/HbC allele frequencies (south: higher HbS; north: higher HbC; north-south intermarriage ~2.6%). Allele freqs are zone-level approximations, NOT regional measurements.",
+      "allele_freq_by_zone": {
+        "south_forest_coastal": {"q_S": 0.07, "q_C": 0.045, "source": "Derived from Kumasi newborn trait rates (AS 13.3%, AC 8.5%)", "confidence": "low"},
+        "middle_transition": {"q_S": 0.06, "q_C": 0.065, "source": "Interpolated placeholder", "confidence": "low"},
+        "north_savannah": {"q_S": 0.052, "q_C": 0.085, "source": "Derived from Tamale newborn genotypes (ASH 2024 abstract)", "confidence": "low"},
+        "far_north_upper": {"q_S": 0.038, "q_C": 0.128, "source": "Ghansah A et al. PLoS One 2012 (Kassena-Nankana, Upper East; controls n=806), PMID 22506028 https://pmc.ncbi.nlm.nih.gov/articles/PMC3323552", "confidence": "medium"},
+        "scd_birth_prevalence_formula": "SS = q_S^2 ; SC = 2*q_S*q_C"
+      },
+      "list": [
+        {"name": "Greater Accra", "population": 5455692, "zone": "south_forest_coastal"},
+        {"name": "Ashanti", "population": 5440463, "zone": "south_forest_coastal"},
+        {"name": "Eastern", "population": 2925653, "zone": "south_forest_coastal"},
+        {"name": "Central", "population": 2859821, "zone": "south_forest_coastal"},
+        {"name": "Northern", "population": 2310939, "zone": "north_savannah"},
+        {"name": "Western", "population": 2060585, "zone": "south_forest_coastal"},
+        {"name": "Volta", "population": 1659040, "zone": "south_forest_coastal"},
+        {"name": "Upper East", "population": 1301226, "zone": "far_north_upper"},
+        {"name": "Bono", "population": 1208649, "zone": "middle_transition"},
+        {"name": "Bono East", "population": 1203400, "zone": "middle_transition"},
+        {"name": "Upper West", "population": 901502, "zone": "far_north_upper"},
+        {"name": "Western North", "population": 880921, "zone": "south_forest_coastal"},
+        {"name": "Oti", "population": 747248, "zone": "middle_transition"},
+        {"name": "North East", "population": 658946, "zone": "north_savannah"},
+        {"name": "Savannah", "population": 653266, "zone": "north_savannah"},
+        {"name": "Ahafo", "population": 564668, "zone": "middle_transition"}
+      ],
+      "source": "https://www.citypopulation.de/en/ghana/admin/ (GSS 2021 PHC); zone assignment is the author's judgement",
+      "confidence": "high for population; low for zone assignment"
+    },
+    "registries": {
+      "kumasi_sparco_registry_patients": {"value": 3148, "period": "2017-12 to 2020-03", "source": "PMC8908904", "confidence": "high"},
+      "sickleinafrica_total_patients": {"value": 40000, "source": "SADaCC 2025 https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12923167/", "confidence": "medium"}
+    }
+  },
+
+  "sample_size_guidance": {
+    "method": "Riley RD et al. BMJ 2020;368:m441 (pmsampsize): shrinkage >=0.9, optimism <=0.05, risk within +/-0.05",
+    "worked_example": {"outcome_7d_risk": 0.02, "parameters": 20, "r2_cs_assumed": 0.027, "required_patient_weeks": 6600, "required_events": 130, "note": "Derived here; clustered data -> target >=200 events from >=150-200 distinct patients"},
+    "external_validation_min_events": {"value": 100, "preferred": 200, "source": "Collins GS, Ogundimu EO, Altman DG. Stat Med 2016 (citation from memory)", "confidence": "medium"}
+  }
+}
