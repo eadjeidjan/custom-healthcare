@@ -1,0 +1,35 @@
+# SickleGuard front proxy: automatic HTTPS for {$DOMAIN}, forwards everything to the web container (nginx), which
+# serves the app and proxies /api/.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	request_body {
+		max_size 25MB
+	}
+	log {
+		output stdout
+		format filter {
+			wrap console
+			fields {
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+				request>uri query {
+					replace token REDACTED
+				}
+			}
+		}
+	}
+	# Chat answers stream (Server-Sent Events): pass them through immediately.
+	reverse_proxy 127.0.0.1:{$WEB_PORT} {
+		flush_interval -1
+	}
+}

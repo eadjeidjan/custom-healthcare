@@ -1,0 +1,19 @@
+# Optional HTTPS front proxy (compose project "sg-edge"): ports 80/443, Let's Encrypt certificate for ${DOMAIN},
+# forwards to the web container on the host's 127.0.0.1:${WEB_PORT}. Started by `scripts/sg edge`.
+name: sg-edge
+services:
+  caddy:
+    image: caddy:2.11
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in deploy/.env}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      WEB_PORT: ${WEB_PORT:-8310}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+volumes:
+  caddy-data:
+  caddy-config:

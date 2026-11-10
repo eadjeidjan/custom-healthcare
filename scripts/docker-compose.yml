@@ -1,0 +1,16 @@
+# Local development services: Postgres and Qdrant (the API, MCP server and web run on the host / in node).
+name: sg-dev
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment: {POSTGRES_USER: sg, POSTGRES_PASSWORD: sg, POSTGRES_DB: sickleguard}
+    ports: ["127.0.0.1:5470:5432"]
+    volumes: [dev-db:/var/lib/postgresql/data]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U sg -d sickleguard"], interval: 3s, retries: 20}
+  qdrant:
+    image: qdrant/qdrant:v1.19.2
+    ports: ["127.0.0.1:6350:6333"]
+    volumes: [dev-qdrant:/qdrant/storage]
+volumes:
+  dev-db:
+  dev-qdrant:

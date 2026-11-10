@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# SickleGuard server control. Run from the repository root on the server.
+#   sg init      create deploy/.env with random secrets (asks for the OpenAI key, hidden)
+#   sg up        build and start (or update) the stack
+#   sg down      stop the stack (data kept)
+#   sg status    containers and health
+#   sg logs [s]  follow logs (api, mcp, web, db, qdrant)
+#   sg update    git pull, rebuild, restart
+#   sg backup    database dump to backups/
+#   sg test      run the API tests inside the image
+#   sg edge      start the HTTPS proxy (needs DOMAIN in deploy/.env)
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ENV="$ROOT/deploy/.env"
+DC=(docker compose --env-file "$ENV" -f "$ROOT/deploy/docker-compose.yml")
+need_env() { [ -f "$ENV" ] || { echo "No deploy/.env yet: run 'scripts/sg init' first."; exit 1; }; }
+rand() { openssl rand -hex "${1:-24}"; }
+
+case "${1:-help}" in
+  init)
+    [ -f "$ENV" ] && { echo "deploy/.env already exists (left unchanged)."; exit 0; }
+    cp "$ROOT/deploy/env.example" "$ENV"; chmod 600 "$ENV"
+    pw=$(openssl rand -base64 18 | tr -d '/+=')
+    sed -i.bak -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(rand)|" -e "s|^JWT_SECRET=.*|JWT_SECRET=$(rand 32)|" \
+      -e "s|^MCP_TOKEN=.*|MCP_TOKEN=$(rand)|" -e "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$pw|" "$ENV" && rm -f "$ENV.bak"
+    read -rsp "OpenAI API key (hidden, Enter to skip): " key; echo
+    [ -n "$key" ] && sed -i.bak "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$key|" "$ENV" && rm -f "$ENV.bak"
+    echo "✓ deploy/.env created. Admin sign-in: admin@sickleguard.local — password is ADMIN_PASSWORD in deploy/.env."
+    echo "  Set PUBLIC_URL / DOMAIN / ACME_EMAIL there before 'sg edge'." ;;
+  up) need_env; "${DC[@]}" up -d --build --wait; "${DC[@]}" ps ;;
+  down) need_env; "${DC[@]}" down; echo "✓ stopped (data kept)" ;;
+  status) need_env; "${DC[@]}" ps
+          curl -fsS "http://127.0.0.1:$(grep -E '^WEB_PORT=' "$ENV" | cut -d= -f2 || echo 8310)/api/v1/health" && echo ;;
+  logs) need_env; shift; "${DC[@]}" logs -f --tail 200 "$@" ;;
+  update) need_env; git -C "$ROOT" pull --ff-only; "$0" backup; "$0" up ;;
+  backup) need_env; mkdir -p "$ROOT/backups"; f="$ROOT/backups/sickleguard-$(date +%Y%m%d-%H%M%S).sql.gz"
+          "${DC[@]}" exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$f"; chmod 600 "$f"
+          echo "✓ $f" ;;
+  test) need_env; "${DC[@]}" run --rm --no-deps -v "$ROOT/api/tests:/app/tests:ro" api sh -c \
+          "uv sync --frozen -q --group dev && python -m pytest -q" ;;
+  edge) need_env; docker compose --env-file "$ENV" -f "$ROOT/deploy/edge/docker-compose.yml" up -d ;;
+  *) sed -n '2,12p' "$0" ;;
+esac

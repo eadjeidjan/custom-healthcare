@@ -1,0 +1,82 @@
+# SickleGuard: one instance (compose project "sg"). Run it with scripts/sg, which passes --env-file deploy/.env.
+# Only the web container publishes a port: 127.0.0.1:${WEB_PORT} (the edge proxy or an SSH tunnel reaches it).
+# nginx in the web container serves the app and proxies /api/ -> api:8210. The MCP server stays internal.
+name: ${COMPOSE_PROJECT_NAME:-sg}
+
+x-app-env: &app-env
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  CHAT_MODEL: ${CHAT_MODEL:-gpt-4.1-mini}
+  EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-small}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sg}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@db:5432/${POSTGRES_DB:-sickleguard}
+  QDRANT_URL: http://qdrant:6333
+  MCP_URL: http://mcp:8211/mcp
+  MCP_HOST: 0.0.0.0
+  MCP_TOKEN: ${MCP_TOKEN:?set MCP_TOKEN in deploy/.env}
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in deploy/.env}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@sickleguard.local}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+  CORS_ORIGINS: ${PUBLIC_URL:-http://localhost:8310}
+  SEED_DEMO: ${SEED_DEMO:-true}
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-sickleguard}
+    volumes: [db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.2
+    restart: unless-stopped
+    volumes: [qdrant-data:/qdrant/storage]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: { context: ../api }
+    image: sg-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment: *app-env
+    volumes: [model-data:/app/models]
+    depends_on:
+      db: { condition: service_healthy }
+      qdrant: { condition: service_healthy }
+
+  mcp:
+    image: sg-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: ["python", "-m", "app.mcp_server"]
+    environment: *app-env
+    volumes: [model-data:/app/models]
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8211), 3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: { context: ../web }
+    image: sg-web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports: ["${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8310}:80"]
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  db-data:
+  qdrant-data:
+  model-data:
