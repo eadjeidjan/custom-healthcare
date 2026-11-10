@@ -1,7 +1,7 @@
 # SickleGuard: one instance per Compose project. Run it with the sickleguard CLI (cli/), which passes
 #   -p sg-<instance> --env-file deploy/<instance>.env  and IMAGE_TAG (the git SHA the images were built from).
 # Only the web container publishes a port: ${WEB_BIND}:${WEB_PORT} (the edge proxy or an SSH tunnel reaches it).
-# nginx in the web container serves the app and proxies /api/ -> api:8210. The MCP server stays internal.
+# nginx in the web container serves the app and proxies /api/ -> sickleguard-api:8210 (unique name; see the api service). The MCP server stays internal.
 # Volumes: db-data (Postgres), qdrant-data (vectors), app-data (/app/data: uploaded files); `sickleguard backup`
 # saves all three. The risk model is baked into the api image (/app/models, trained at build), so every image tag
 # carries its own model and a rollback brings the matching model back.
@@ -58,6 +58,11 @@ services:
     restart: unless-stopped
     environment: *app-env
     volumes: [app-data:/app/data]
+    networks:
+      default:
+        # unique name for the web container's nginx: on a shared server the web container also sits on the
+        # kasada-edge network, where other products have services called "api" too
+        aliases: ["sickleguard-api"]
     depends_on:
       db: { condition: service_healthy }
       qdrant: { condition: service_healthy }
